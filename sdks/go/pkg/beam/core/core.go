@@ -21,7 +21,6 @@
 //
 // Files in this package may be generated or updated by release scripts, allowing
 // for accurate version information to be included.
-// TEST - Don't merge this change
 package core
 
 const (

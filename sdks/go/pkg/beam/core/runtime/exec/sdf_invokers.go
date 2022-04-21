@@ -386,6 +386,7 @@ func newGetInitialWatermarkEstimatorStateInvoker(fn *funcx.Fn) (*giwesInvoker, e
 }
 
 func (n *giwesInvoker) initCallFn() error {
+	// If no GetWatermarkEstimatorState function is defined, we'll use a default implementation that just returns false as the state.
 	if n.fn == nil {
 		n.call = func(rest interface{}, elms *FullValue) interface{} {
 			return false
@@ -464,6 +465,7 @@ func newGetWatermarkEstimatorStateInvoker(fn *funcx.Fn) (*gwesInvoker, error) {
 }
 
 func (n *gwesInvoker) initCallFn() error {
+	// If no GetWatermarkEstimatorState function is defined, we'll use a default implementation that just returns false as the state.
 	if n.fn == nil {
 		n.call = func(we sdf.WatermarkEstimator) interface{} {
 			return false

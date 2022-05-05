@@ -24,7 +24,6 @@ go 1.16
 
 require (
 	cloud.google.com/go/bigquery v1.28.0
-	cloud.google.com/go/compute v1.5.0 // indirect
 	cloud.google.com/go/datastore v1.6.0
 	cloud.google.com/go/iam v0.2.0 // indirect
 	cloud.google.com/go/pubsub v1.18.0
@@ -33,7 +32,7 @@ require (
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/golang/protobuf v1.5.2 // TODO(danoliveira): Fully replace this with google.golang.org/protobuf
 	github.com/golang/snappy v0.0.4 // indirect
-	github.com/google/go-cmp v0.5.7
+	github.com/google/go-cmp v0.5.8
 	github.com/google/uuid v1.3.0
 	github.com/kr/text v0.2.0 // indirect
 	github.com/lib/pq v1.10.4
@@ -44,14 +43,14 @@ require (
 	github.com/testcontainers/testcontainers-go v0.12.0
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/xitongsys/parquet-go-source v0.0.0-20220315005136-aec0fe3e777c
-	golang.org/x/net v0.0.0-20220225172249-27dd8689420f
-	golang.org/x/oauth2 v0.0.0-20220223155221-ee480838109b
-	golang.org/x/sys v0.0.0-20220227234510-4e6760a101f9
+	golang.org/x/net v0.0.0-20220425223048-2871e0cb64e4
+	golang.org/x/oauth2 v0.0.0-20220411215720-9780585627b5
+	golang.org/x/sys v0.0.0-20220502124256-b6088ccd6cba
 	golang.org/x/text v0.3.7
-	google.golang.org/api v0.70.0
-	google.golang.org/genproto v0.0.0-20220302033224-9aa15565e42a
-	google.golang.org/grpc v1.44.0
-	google.golang.org/protobuf v1.27.1
+	google.golang.org/api v0.78.0
+	google.golang.org/genproto v0.0.0-20220429170224-98d788798c3e
+	google.golang.org/grpc v1.46.0
+	google.golang.org/protobuf v1.28.0
 	gopkg.in/linkedin/goavro.v1 v1.0.5 // indirect
 	gopkg.in/retry.v1 v1.0.3
 	gopkg.in/yaml.v2 v2.4.0

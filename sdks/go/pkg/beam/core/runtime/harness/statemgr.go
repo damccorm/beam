@@ -74,12 +74,36 @@ func (s *ScopedStateReader) OpenIterable(ctx context.Context, id exec.StreamID, 
 	})
 }
 
+// TODO - we should probably split this out into separate readers and writers.
+// OpenBagUserStateReaderWriter opens a byte stream for reading and writing user bag state.
+func (s *ScopedStateReader) OpenBagUserStateReaderWriter(ctx context.Context, id exec.StreamID, userStateId string, key []byte, w []byte) (io.ReadWriteCloser, error) {
+	return s.openReaderWriter(ctx, id, func(ch *StateChannel) *stateKeyReaderWriter {
+		return newBagUserStateReaderWriter(ch, id, s.instID, userStateId, key, w)
+	})
+}
+
 // GetSideInputCache returns a pointer to the SideInputCache being used by the SDK harness.
 func (s *ScopedStateReader) GetSideInputCache() exec.SideCache {
 	return s.cache
 }
 
 func (s *ScopedStateReader) openReader(ctx context.Context, id exec.StreamID, readerFn func(*StateChannel) *stateKeyReader) (*stateKeyReader, error) {
+	ch, err := s.open(ctx, id.Port)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, errors.Errorf("instruction %v no longer processing", s.instID)
+	}
+	ret := readerFn(ch)
+	s.mu.Unlock()
+	return ret, nil
+}
+
+func (s *ScopedStateReader) openReaderWriter(ctx context.Context, id exec.StreamID, readerFn func(*StateChannel) *stateKeyReaderWriter) (*stateKeyReaderWriter, error) {
 	ch, err := s.open(ctx, id.Port)
 	if err != nil {
 		return nil, err
@@ -117,6 +141,21 @@ func (s *ScopedStateReader) Close() error {
 }
 
 type stateKeyReader struct {
+	instID instructionID
+	key    *fnpb.StateKey
+
+	token []byte
+	buf   []byte
+	eof   bool
+
+	ch     *StateChannel
+	closed bool
+	mu     sync.Mutex
+}
+
+type stateKeyReaderWriter struct {
+	stateKeyReader
+
 	instID instructionID
 	key    *fnpb.StateKey
 
@@ -174,6 +213,24 @@ func newRunnerReader(ch *StateChannel, instID instructionID, k []byte) *stateKey
 		},
 	}
 	return &stateKeyReader{
+		instID: instID,
+		key:    key,
+		ch:     ch,
+	}
+}
+
+func newBagUserStateReaderWriter(ch *StateChannel, id exec.StreamID, instID instructionID, userStateId string, k []byte, w []byte) *stateKeyReaderWriter {
+	key := &fnpb.StateKey{
+		Type: &fnpb.StateKey_BagUserState_{
+			BagUserState: &fnpb.StateKey_BagUserState{
+				TransformId: id.PtransformID,
+				UserStateId: userStateId,
+				Window:      w,
+				Key:         k,
+			},
+		},
+	}
+	return &stateKeyReaderWriter{
 		instID: instID,
 		key:    key,
 		ch:     ch,
@@ -244,6 +301,33 @@ func (r *stateKeyReader) Read(buf []byte) (int, error) {
 		r.buf = r.buf[n:]
 	}
 	return n, nil
+}
+
+func (r *stateKeyReader) Write(buf []byte) (int, error) {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return 0, errors.New("state channel closed")
+	}
+	localChannel := r.ch
+	r.mu.Unlock()
+
+	req := &fnpb.StateRequest{
+		// Id: set by StateChannel
+		InstructionId: string(r.instID),
+		StateKey:      r.key,
+		Request: &fnpb.StateRequest_Append{
+			Append: &fnpb.StateAppendRequest{
+				Data: buf,
+			},
+		},
+	}
+	_, err := localChannel.Send(req)
+	if err != nil {
+		r.Close()
+		return 0, err
+	}
+	return len(buf), nil
 }
 
 func (r *stateKeyReader) Close() error {

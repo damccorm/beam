@@ -131,6 +131,10 @@ func (t *testStateReader) OpenIterable(ctx context.Context, id StreamID, key []b
 	return nil, nil
 }
 
+func (t *testStateReader) OpenBagUserStateReaderWriter(ctx context.Context, id StreamID, userStateId string, key []byte, w []byte) (io.ReadWriteCloser, error) {
+	return nil, nil
+}
+
 func (t *testStateReader) GetSideInputCache() SideCache {
 	return &testSideCache{}
 }

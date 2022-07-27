@@ -73,6 +73,8 @@ type StateReader interface {
 	OpenIterable(ctx context.Context, id StreamID, key []byte) (io.ReadCloser, error)
 	// GetSideInputCache returns the SideInputCache being used at the harness level.
 	GetSideInputCache() SideCache
+	// OpenBagUserStateReaderWriter opens a byte stream for reading and writing user bag state.
+	OpenBagUserStateReaderWriter(ctx context.Context, id StreamID, userStateId string, key []byte, w []byte) (io.ReadWriteCloser, error)
 }
 
 // TODO(herohde) 7/20/2018: user state management

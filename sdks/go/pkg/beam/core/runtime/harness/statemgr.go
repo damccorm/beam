@@ -219,6 +219,8 @@ func newRunnerReader(ch *StateChannel, instID instructionID, k []byte) *stateKey
 	}
 }
 
+// TODO - this won't ~really~ work as is. Specifically, we'll need a way to differentiate between append and other write types
+// Basically, this needs to be more thought out.
 func newBagUserStateReaderWriter(ch *StateChannel, id exec.StreamID, instID instructionID, userStateId string, k []byte, w []byte) *stateKeyReaderWriter {
 	key := &fnpb.StateKey{
 		Type: &fnpb.StateKey_BagUserState_{

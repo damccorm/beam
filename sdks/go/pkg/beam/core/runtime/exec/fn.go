@@ -169,7 +169,7 @@ func InvokeWithoutEventTime(ctx context.Context, fn *funcx.Fn, opt *MainInput, b
 type invoker struct {
 	fn   *funcx.Fn
 	args []interface{}
-	sp   stateProvider
+	sp   *stateProvider
 	// TODO(lostluck):  2018/07/06 consider replacing with a slice of functions to run over the args slice, as an improvement.
 	ctxIdx, pnIdx, wndIdx, etIdx, bfIdx, weIdx, spIdx int   // specialized input indexes
 	outEtIdx, outPcIdx, outErrIdx                     int   // specialized output indexes
@@ -274,7 +274,7 @@ func (n *invoker) Invoke(ctx context.Context, pn typex.PaneInfo, ws []typex.Wind
 		if err != nil {
 			return nil, err
 		}
-		n.sp = sp
+		n.sp = &sp
 		args[n.spIdx] = n.sp
 	}
 

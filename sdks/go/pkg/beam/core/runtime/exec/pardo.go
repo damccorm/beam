@@ -368,13 +368,6 @@ func (n *ParDo) preInvoke(ctx context.Context, ws []typex.Window, ts typex.Event
 			return err
 		}
 	}
-	if n.inv.spIdx >= 0 {
-		sp, err := n.UState.NewStateProvider(ctx, n.reader, ws[0], nil)
-		if err != nil {
-			return err
-		}
-		n.inv.sp = sp
-	}
 	return n.initSideInput(ctx, ws[0])
 }
 

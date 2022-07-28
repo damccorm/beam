@@ -75,6 +75,7 @@ import (
 	"strings"
 
 	"github.com/apache/beam/sdks/v2/go/pkg/beam"
+	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/state"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/io/textio"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/register"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/transforms/stats"
@@ -119,6 +120,7 @@ var (
 // by calling beam.RegisterFunction in an init() call.
 func init() {
 	register.DoFn3x0[context.Context, string, func(string)](&extractFn{})
+	register.DoFn3x1[state.Provider, string, int, string](&formatFn{})
 	register.Emitter1[string]()
 }
 
@@ -150,9 +152,19 @@ func (f *extractFn) ProcessElement(ctx context.Context, line string, emit func(s
 	}
 }
 
+type formatFn struct {
+	State1 state.ValueState[int]
+}
+
+// When this works, the POC is done
 // formatFn is a DoFn that formats a word and its count as a string.
-func formatFn(w string, c int) string {
-	return fmt.Sprintf("%s: %v", w, c)
+func (f *formatFn) ProcessElement(s state.Provider, w string, c int) string {
+	i, ok := f.State1.Read(s)
+	if !ok {
+		f.State1.Write(s, 1)
+	}
+	f.State1.Write(s, i+1)
+	return fmt.Sprintf("%s(%v): %v", w, i, c)
 }
 
 // Concept #4: A composite PTransform is a Go function that adds
@@ -197,7 +209,7 @@ func main() {
 
 	lines := textio.Read(s, *input)
 	counted := CountWords(s, lines)
-	formatted := beam.ParDo(s, formatFn, counted)
+	formatted := beam.ParDo(s, &formatFn{State1: state.MakeValueState[int]("key1")}, counted)
 	textio.Write(s, *output, formatted)
 
 	// Concept #1: The beamx.Run convenience wrapper allows a number of

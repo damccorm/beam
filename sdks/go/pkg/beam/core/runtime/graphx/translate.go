@@ -476,7 +476,7 @@ func (m *marshaller) addMultiEdge(edge NamedEdge) ([]string, error) {
 						},
 					},
 					Protocol: &pipepb.FunctionSpec{
-						Urn: pipepb.StandardUserStateTypes_Enum_name[int32(pipepb.StandardUserStateTypes_BAG)],
+						Urn: "beam:user_state:bag:v1",
 					},
 				}
 			}

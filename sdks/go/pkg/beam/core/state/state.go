@@ -93,6 +93,9 @@ func (s *ValueState[T]) Read(p Provider) (T, bool) {
 
 // StateKey returns the key for this pipeline state entry.
 func (s ValueState[T]) StateKey() string {
+	if s.Key == "" {
+		panic("ValueState exists on struct but has not been initialized with a key.")
+	}
 	return s.Key
 }
 

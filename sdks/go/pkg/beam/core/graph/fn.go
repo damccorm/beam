@@ -1254,6 +1254,7 @@ func validateState(fn *DoFn) error {
 	if fn.Fn == nil {
 		return nil
 	}
+	// TODO - validate that state is only declared if the DoFn is keyed.
 	ps := fn.PipelineState()
 	if _, ok := fn.Fn.StateProvider(); ok {
 		if len(ps) == 0 {

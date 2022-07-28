@@ -162,8 +162,9 @@ func (f *formatFn) ProcessElement(s state.Provider, w string, c int) string {
 	i, ok := f.State1.Read(s)
 	if !ok {
 		f.State1.Write(s, 1)
+	} else {
+		f.State1.Write(s, i+1)
 	}
-	f.State1.Write(s, i+1)
 	return fmt.Sprintf("%s(%v): %v", w, i, c)
 }
 

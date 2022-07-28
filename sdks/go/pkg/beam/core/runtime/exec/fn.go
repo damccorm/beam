@@ -24,6 +24,7 @@ import (
 
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/funcx"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/graph"
+	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/graph/coder"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/graph/mtime"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/graph/window"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/sdf"
@@ -80,8 +81,7 @@ type stateProvider struct {
 	transactionsByKey  map[string][]state.Transaction
 	initialValueByKey  map[string]interface{}
 	readerWritersByKey map[string]*io.ReadWriteCloser
-	encodersByKey      map[string]ElementEncoder // TODO - these ideally should be coder.Coders not exec.Coders so that they don't need to handle full values.
-	decodersByKey      map[string]ElementDecoder
+	codersByKey        map[string]*coder.Coder
 }
 
 // ReadValueState reads a value state from the State API
@@ -92,7 +92,8 @@ func (s *stateProvider) ReadValueState(userStateId string) (interface{}, []state
 		if err != nil {
 			return nil, nil, err
 		}
-		resp, err := (s.decodersByKey[userStateId]).Decode(*rw)
+		dec := MakeElementDecoder(s.codersByKey[userStateId])
+		resp, err := dec.Decode(*rw)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -114,7 +115,9 @@ func (s *stateProvider) WriteValueState(val state.Transaction) error {
 		return err
 	}
 	fv := FullValue{Elm: val.Val}
-	err = (s.encodersByKey[val.Key]).Encode(&fv, *rw)
+	// TODO - move this to userstate.go so we only do it once.
+	enc := MakeElementEncoder(s.codersByKey[val.Key])
+	err = enc.Encode(&fv, *rw)
 	if err != nil {
 		return err
 	}

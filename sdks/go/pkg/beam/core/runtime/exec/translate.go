@@ -467,25 +467,26 @@ func (b *builder) makeLink(from string, id linkID) (Node, error) {
 					input := unmarshalKeyedValues(transform.GetInputs())
 
 					if len(userState) > 0 {
-						stateIdToEncoder := make(map[string]ElementEncoder)
-						stateIdToDecoder := make(map[string]ElementDecoder)
+						stateIdToCoder := make(map[string]*coder.Coder)
 						for key, spec := range userState {
-							c, err := b.coders.Coder(spec.GetBagSpec().ElementCoderId)
+							// TODO - this needs to handle all sorts of state spec types. Probably should be split into its own function.
+							cID := spec.GetReadModifyWriteSpec().CoderId
+							c, err := b.coders.Coder(cID)
 							if err != nil {
 								return nil, err
 							}
-							stateIdToEncoder[key] = MakeElementEncoder(coder.SkipW(c).Components[0])
-							stateIdToDecoder[key] = MakeElementDecoder(coder.SkipW(c).Components[0])
+							stateIdToCoder[key] = c
 						}
 						sid := StreamID{
 							Port:         Port{URL: b.desc.GetStateApiServiceDescriptor().GetUrl()},
 							PtransformID: id.to,
 						}
+
 						ec, wc, err := b.makeCoderForPCollection(input[0])
 						if err != nil {
 							return nil, err
 						}
-						n.UState = NewUserStateAdapter(sid, coder.NewW(ec, wc), stateIdToEncoder, stateIdToDecoder)
+						n.UState = NewUserStateAdapter(sid, coder.NewW(ec, wc), stateIdToCoder)
 					}
 
 					for i := 1; i < len(input); i++ {

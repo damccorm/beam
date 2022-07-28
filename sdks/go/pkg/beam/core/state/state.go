@@ -46,8 +46,8 @@ type Transaction struct {
 // This should not be manipulated directly. Instead it should be used as a parameter
 // to functions on State objects like state.ValueState.
 type Provider interface {
-	ReadValueState(id string) (interface{}, []Transaction)
-	WriteValueState(val Transaction)
+	ReadValueState(id string) (interface{}, []Transaction, error)
+	WriteValueState(val Transaction) error
 }
 
 type PipelineState interface {
@@ -75,7 +75,11 @@ func (s *ValueState[T]) Write(p Provider, val T) {
 func (s *ValueState[T]) Read(p Provider) (T, bool) {
 	// This replays any writes that have happened to this value since we last read
 	// For more detail, see "State Transactionality" below for buffered transactions
-	cur, bufferedTransactions := p.ReadValueState(s.Key)
+	cur, bufferedTransactions, err := p.ReadValueState(s.Key)
+	if err != nil {
+		var val T
+		return val, false
+	}
 	for _, t := range bufferedTransactions {
 		switch t.Type {
 		case TransactionType_Set:

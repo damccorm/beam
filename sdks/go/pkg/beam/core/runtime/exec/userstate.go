@@ -30,18 +30,17 @@ type UserStateAdapter interface {
 }
 
 type userStateAdapter struct {
-	sid              StreamID
-	wc               WindowEncoder
-	kc               ElementEncoder
-	ec               ElementDecoder
-	stateIdToEncoder map[string]ElementEncoder
-	stateIdToDecoder map[string]ElementDecoder
-	c                *coder.Coder
+	sid            StreamID
+	wc             WindowEncoder
+	kc             ElementEncoder
+	ec             ElementDecoder
+	stateIdToCoder map[string]*coder.Coder
+	c              *coder.Coder
 }
 
 // NewUserStateAdapter returns a user state adapter for the given StreamID and coder.
 // It expects a W<V> or W<KV<K,V>> coder, because the protocol requires windowing information.
-func NewUserStateAdapter(sid StreamID, c *coder.Coder, stateIdToEncoder map[string]ElementEncoder, stateIdToDecoder map[string]ElementDecoder) UserStateAdapter {
+func NewUserStateAdapter(sid StreamID, c *coder.Coder, stateIdToCoder map[string]*coder.Coder) UserStateAdapter {
 	if !coder.IsW(c) {
 		panic(fmt.Sprintf("expected WV coder for user state %v: %v", sid, c))
 	}
@@ -49,18 +48,20 @@ func NewUserStateAdapter(sid StreamID, c *coder.Coder, stateIdToEncoder map[stri
 	wc := MakeWindowEncoder(c.Window)
 	var kc ElementEncoder
 	var ec ElementDecoder
+	// TODO - revisit this logic - does this work? Maybe more descriptive vars
 	if coder.IsKV(coder.SkipW(c)) {
 		kc = MakeElementEncoder(coder.SkipW(c).Components[0])
 		ec = MakeElementDecoder(coder.SkipW(c).Components[1])
 	} else {
 		ec = MakeElementDecoder(coder.SkipW(c))
 	}
-	return &userStateAdapter{sid: sid, wc: wc, kc: kc, ec: ec, c: c, stateIdToEncoder: stateIdToEncoder, stateIdToDecoder: stateIdToDecoder}
+	return &userStateAdapter{sid: sid, wc: wc, kc: kc, ec: ec, c: c, stateIdToCoder: stateIdToCoder}
 }
 
 // TODO - header comment
 func (s *userStateAdapter) NewStateProvider(ctx context.Context, reader StateReader, w typex.Window, element interface{}) (stateProvider, error) {
-	elementKey, err := EncodeElement(s.kc, element)
+	// TODO - revisit this with the above. Does this work in all cases?
+	elementKey, err := EncodeElement(s.kc, element.(*MainInput).Key.Elm) // Failing here
 	if err != nil {
 		return stateProvider{}, err
 	}
@@ -78,8 +79,7 @@ func (s *userStateAdapter) NewStateProvider(ctx context.Context, reader StateRea
 		transactionsByKey:  make(map[string][]state.Transaction),
 		initialValueByKey:  make(map[string]interface{}),
 		readerWritersByKey: make(map[string]*io.ReadWriteCloser),
-		encodersByKey:      s.stateIdToEncoder,
-		decodersByKey:      s.stateIdToDecoder,
+		codersByKey:        s.stateIdToCoder,
 	}
 
 	return sp, nil

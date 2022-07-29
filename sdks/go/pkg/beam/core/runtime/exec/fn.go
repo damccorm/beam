@@ -94,8 +94,11 @@ func (s *stateProvider) ReadValueState(userStateId string) (interface{}, []state
 		}
 		dec := MakeElementDecoder(s.codersByKey[userStateId])
 		resp, err := dec.Decode(rw)
-		if err != nil {
+		if err != nil && err != io.EOF {
 			return nil, nil, err
+		}
+		if resp == nil {
+			return nil, []state.Transaction{}, nil
 		}
 		initialValue = resp.Elm
 	}

@@ -301,6 +301,23 @@ func (r *stateKeyReader) Write(buf []byte) (int, error) {
 	localChannel := r.ch
 	r.mu.Unlock()
 
+	// TODO - something like this will clear out state.
+	// req1 := &fnpb.StateRequest{
+	// 	// Id: set by StateChannel
+	// 	InstructionId: string(r.instID),
+	// 	StateKey:      r.key,
+	// 	Request: &fnpb.StateRequest_Clear{
+	// 		Clear: &fnpb.StateClearRequest{},
+	// 	},
+	// }
+	// _, err := localChannel.Send(req1)
+	// if err != nil {
+	// 	r.Close()
+	// 	return 0, err
+	// }
+
+	// TODO - aside from needing to split this out into its own thing that doesn't completely blow over the existing side input stuff
+	// this only correctly sets the state the first time. Basically, this whole section needs work. But it does something sorta.
 	req := &fnpb.StateRequest{
 		// Id: set by StateChannel
 		InstructionId: string(r.instID),
@@ -320,10 +337,10 @@ func (r *stateKeyReader) Write(buf []byte) (int, error) {
 }
 
 func (r *stateKeyReader) Close() error {
-	r.mu.Lock()
-	r.closed = true
-	r.ch = nil // StateChannels might be re-used if they're ok, so don't close them here.
-	r.mu.Unlock()
+	// r.mu.Lock()
+	// r.closed = true
+	// r.ch = nil // StateChannels might be re-used if they're ok, so don't close them here.
+	// r.mu.Unlock()
 	return nil
 }
 

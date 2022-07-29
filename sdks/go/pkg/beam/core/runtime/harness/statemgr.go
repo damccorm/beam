@@ -77,9 +77,10 @@ func (s *ScopedStateReader) OpenIterable(ctx context.Context, id exec.StreamID, 
 // TODO - we should probably split this out into separate readers and writers.
 // OpenBagUserStateReaderWriter opens a byte stream for reading and writing user bag state.
 func (s *ScopedStateReader) OpenBagUserStateReaderWriter(ctx context.Context, id exec.StreamID, userStateId string, key []byte, w []byte) (io.ReadWriteCloser, error) {
-	return s.openReaderWriter(ctx, id, func(ch *StateChannel) *stateKeyReaderWriter {
+	rwc, err := s.openReaderWriter(ctx, id, func(ch *StateChannel) *stateKeyReader {
 		return newBagUserStateReaderWriter(ch, id, s.instID, userStateId, key, w)
 	})
+	return rwc, err
 }
 
 // GetSideInputCache returns a pointer to the SideInputCache being used by the SDK harness.
@@ -103,7 +104,7 @@ func (s *ScopedStateReader) openReader(ctx context.Context, id exec.StreamID, re
 	return ret, nil
 }
 
-func (s *ScopedStateReader) openReaderWriter(ctx context.Context, id exec.StreamID, readerFn func(*StateChannel) *stateKeyReaderWriter) (*stateKeyReaderWriter, error) {
+func (s *ScopedStateReader) openReaderWriter(ctx context.Context, id exec.StreamID, readerFn func(*StateChannel) *stateKeyReader) (*stateKeyReader, error) {
 	ch, err := s.open(ctx, id.Port)
 	if err != nil {
 		return nil, err
@@ -116,6 +117,7 @@ func (s *ScopedStateReader) openReaderWriter(ctx context.Context, id exec.Stream
 	}
 	ret := readerFn(ch)
 	s.mu.Unlock()
+
 	return ret, nil
 }
 
@@ -141,21 +143,6 @@ func (s *ScopedStateReader) Close() error {
 }
 
 type stateKeyReader struct {
-	instID instructionID
-	key    *fnpb.StateKey
-
-	token []byte
-	buf   []byte
-	eof   bool
-
-	ch     *StateChannel
-	closed bool
-	mu     sync.Mutex
-}
-
-type stateKeyReaderWriter struct {
-	stateKeyReader
-
 	instID instructionID
 	key    *fnpb.StateKey
 
@@ -221,7 +208,7 @@ func newRunnerReader(ch *StateChannel, instID instructionID, k []byte) *stateKey
 
 // TODO - this won't ~really~ work as is. Specifically, we'll need a way to differentiate between append and other write types
 // Basically, this needs to be more thought out.
-func newBagUserStateReaderWriter(ch *StateChannel, id exec.StreamID, instID instructionID, userStateId string, k []byte, w []byte) *stateKeyReaderWriter {
+func newBagUserStateReaderWriter(ch *StateChannel, id exec.StreamID, instID instructionID, userStateId string, k []byte, w []byte) *stateKeyReader {
 	key := &fnpb.StateKey{
 		Type: &fnpb.StateKey_BagUserState_{
 			BagUserState: &fnpb.StateKey_BagUserState{
@@ -232,7 +219,7 @@ func newBagUserStateReaderWriter(ch *StateChannel, id exec.StreamID, instID inst
 			},
 		},
 	}
-	return &stateKeyReaderWriter{
+	return &stateKeyReader{
 		instID: instID,
 		key:    key,
 		ch:     ch,

@@ -78,7 +78,6 @@ import (
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/state"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/io/textio"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/register"
-	"github.com/apache/beam/sdks/v2/go/pkg/beam/transforms/stats"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/x/beamx"
 )
 
@@ -119,9 +118,9 @@ var (
 // done automatically by the starcgen code generator, or it can be done manually
 // by calling beam.RegisterFunction in an init() call.
 func init() {
-	register.DoFn3x0[context.Context, string, func(string)](&extractFn{})
+	register.DoFn3x0[context.Context, string, func(string, int)](&extractFn{})
 	register.DoFn3x1[state.Provider, string, int, string](&formatFn{})
-	register.Emitter1[string]()
+	register.Emitter2[string, int]()
 }
 
 var (
@@ -137,7 +136,7 @@ type extractFn struct {
 	SmallWordLength int `json:"smallWordLength"`
 }
 
-func (f *extractFn) ProcessElement(ctx context.Context, line string, emit func(string)) {
+func (f *extractFn) ProcessElement(ctx context.Context, line string, emit func(string, int)) {
 	lineLen.Update(ctx, int64(len(line)))
 	if len(strings.TrimSpace(line)) == 0 {
 		empty.Inc(ctx, 1)
@@ -148,7 +147,7 @@ func (f *extractFn) ProcessElement(ctx context.Context, line string, emit func(s
 		if len(word) < f.SmallWordLength {
 			smallWords.Inc(ctx, 1)
 		}
-		emit(word)
+		emit(word, 1)
 	}
 }
 
@@ -159,11 +158,20 @@ type formatFn struct {
 // When this works, the POC is done
 // formatFn is a DoFn that formats a word and its count as a string.
 func (f *formatFn) ProcessElement(s state.Provider, w string, c int) string {
-	i, ok := f.State1.Read(s)
+	i, ok, err := f.State1.Read(s)
+	if err != nil {
+		panic(err)
+	}
 	if !ok {
-		f.State1.Write(s, 1)
+		err = f.State1.Write(s, 1)
+		if err != nil {
+			panic(err)
+		}
 	} else {
 		f.State1.Write(s, i+1)
+		if err != nil {
+			panic(err)
+		}
 	}
 	return fmt.Sprintf("%s(%v): %v", w, i, c)
 }
@@ -186,10 +194,7 @@ func CountWords(s beam.Scope, lines beam.PCollection) beam.PCollection {
 	s = s.Scope("CountWords")
 
 	// Convert lines of text into individual words.
-	col := beam.ParDo(s, &extractFn{SmallWordLength: *smallWordLength}, lines)
-
-	// Count the number of times each word occurs.
-	return stats.Count(s, col)
+	return beam.ParDo(s, &extractFn{SmallWordLength: *smallWordLength}, lines)
 }
 
 func main() {

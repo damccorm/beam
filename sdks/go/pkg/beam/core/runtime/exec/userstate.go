@@ -78,7 +78,7 @@ func (s *userStateAdapter) NewStateProvider(ctx context.Context, reader StateRea
 		window:             win,
 		transactionsByKey:  make(map[string][]state.Transaction),
 		initialValueByKey:  make(map[string]interface{}),
-		readerWritersByKey: make(map[string]*io.ReadWriteCloser),
+		readerWritersByKey: make(map[string]io.ReadWriteCloser),
 		codersByKey:        s.stateIdToCoder,
 	}
 

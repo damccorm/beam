@@ -62,8 +62,8 @@ type ValueState[T any] struct {
 }
 
 // Write is used to write this instance of global pipeline state representing a single value.
-func (s *ValueState[T]) Write(p Provider, val T) {
-	p.WriteValueState(Transaction{
+func (s *ValueState[T]) Write(p Provider, val T) error {
+	return p.WriteValueState(Transaction{
 		Key:  s.Key,
 		Type: TransactionType_Set,
 		Val:  val,
@@ -72,13 +72,13 @@ func (s *ValueState[T]) Write(p Provider, val T) {
 
 // Read is used to read this instance of global pipeline state representing a single value.
 // When a value is not found, returns the 0 value and false.
-func (s *ValueState[T]) Read(p Provider) (T, bool) {
+func (s *ValueState[T]) Read(p Provider) (T, bool, error) {
 	// This replays any writes that have happened to this value since we last read
 	// For more detail, see "State Transactionality" below for buffered transactions
 	cur, bufferedTransactions, err := p.ReadValueState(s.Key)
 	if err != nil {
 		var val T
-		return val, false
+		return val, false, err
 	}
 	for _, t := range bufferedTransactions {
 		switch t.Type {
@@ -90,9 +90,9 @@ func (s *ValueState[T]) Read(p Provider) (T, bool) {
 	}
 	if cur == nil {
 		var val T
-		return val, false
+		return val, false, nil
 	}
-	return cur.(T), true
+	return cur.(T), true, nil
 }
 
 // StateKey returns the key for this pipeline state entry.

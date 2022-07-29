@@ -80,7 +80,7 @@ type stateProvider struct {
 
 	transactionsByKey  map[string][]state.Transaction
 	initialValueByKey  map[string]interface{}
-	readerWritersByKey map[string]*io.ReadWriteCloser
+	readerWritersByKey map[string]io.ReadWriteCloser
 	codersByKey        map[string]*coder.Coder
 }
 
@@ -93,7 +93,7 @@ func (s *stateProvider) ReadValueState(userStateId string) (interface{}, []state
 			return nil, nil, err
 		}
 		dec := MakeElementDecoder(s.codersByKey[userStateId])
-		resp, err := dec.Decode(*rw)
+		resp, err := dec.Decode(rw)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -117,7 +117,7 @@ func (s *stateProvider) WriteValueState(val state.Transaction) error {
 	fv := FullValue{Elm: val.Val}
 	// TODO - move this to userstate.go so we only do it once.
 	enc := MakeElementEncoder(s.codersByKey[val.Key])
-	err = enc.Encode(&fv, *rw)
+	err = enc.Encode(&fv, rw)
 	if err != nil {
 		return err
 	}
@@ -135,13 +135,13 @@ func (s *stateProvider) WriteValueState(val state.Transaction) error {
 	return nil
 }
 
-func (s *stateProvider) getReadWriter(userStateId string) (*io.ReadWriteCloser, error) {
+func (s *stateProvider) getReadWriter(userStateId string) (io.ReadWriteCloser, error) {
 	if _, ok := s.readerWritersByKey[userStateId]; !ok {
 		rw, err := s.sr.OpenBagUserStateReaderWriter(s.ctx, s.SID, userStateId, s.elementKey, s.window)
 		if err != nil {
 			return nil, err
 		}
-		s.readerWritersByKey[userStateId] = &rw
+		s.readerWritersByKey[userStateId] = rw
 		return s.readerWritersByKey[userStateId], nil
 	}
 

@@ -31,6 +31,7 @@ import (
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/state"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/typex"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/internal/errors"
+	"github.com/apache/beam/sdks/v2/go/pkg/beam/log"
 )
 
 //go:generate specialize --input=fn_arity.tmpl
@@ -100,6 +101,7 @@ func (s *stateProvider) ReadValueState(userStateId string) (interface{}, []state
 		if resp == nil {
 			return nil, []state.Transaction{}, nil
 		}
+		log.Debugf(s.ctx, "resp: %v", resp)
 		initialValue = resp.Elm
 	}
 
@@ -120,6 +122,7 @@ func (s *stateProvider) WriteValueState(val state.Transaction) error {
 	fv := FullValue{Elm: val.Val}
 	// TODO - move this to userstate.go so we only do it once.
 	enc := MakeElementEncoder(s.codersByKey[val.Key])
+	// log.Debugf(s.ctx, "writing: %v with encoder of kind %v with custom name %v and type %v", fv, s.codersByKey[val.Key].Kind, s.codersByKey[val.Key].Custom.Name, s.codersByKey[val.Key].Custom.Type)
 	err = enc.Encode(&fv, rw)
 	if err != nil {
 		return err
@@ -148,7 +151,7 @@ func (s *stateProvider) getReadWriter(userStateId string) (io.ReadWriteCloser, e
 		return s.readerWritersByKey[userStateId], nil
 	}
 
-	return s.readerWritersByKey[userStateId], nil
+	return s.sr.OpenBagUserStateReaderWriter(s.ctx, s.SID, userStateId, s.elementKey, s.window)
 }
 
 // Invoke invokes the fn with the given values. The extra values must match the non-main

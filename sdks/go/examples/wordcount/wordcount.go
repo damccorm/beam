@@ -152,13 +152,16 @@ func (f *extractFn) ProcessElement(ctx context.Context, line string, emit func(s
 }
 
 type formatFn struct {
-	State1 state.ValueState[int]
+	State1 state.ValueState[int64]
 }
 
 // When this works, the POC is done
 // formatFn is a DoFn that formats a word and its count as a string.
 func (f *formatFn) ProcessElement(s state.Provider, w string, c int) string {
 	i, ok, err := f.State1.Read(s)
+	if i != 0 && !ok {
+		panic(fmt.Sprintf("i=%v, ok=%v", i, ok))
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -215,7 +218,7 @@ func main() {
 
 	lines := textio.Read(s, *input)
 	counted := CountWords(s, lines)
-	formatted := beam.ParDo(s, &formatFn{State1: state.MakeValueState[int]("key1")}, counted)
+	formatted := beam.ParDo(s, &formatFn{State1: state.MakeValueState[int64]("key1")}, counted)
 	textio.Write(s, *output, formatted)
 
 	// Concept #1: The beamx.Run convenience wrapper allows a number of

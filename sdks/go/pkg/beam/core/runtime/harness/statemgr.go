@@ -302,19 +302,19 @@ func (r *stateKeyReader) Write(buf []byte) (int, error) {
 	r.mu.Unlock()
 
 	// TODO - something like this will clear out state.
-	// req1 := &fnpb.StateRequest{
-	// 	// Id: set by StateChannel
-	// 	InstructionId: string(r.instID),
-	// 	StateKey:      r.key,
-	// 	Request: &fnpb.StateRequest_Clear{
-	// 		Clear: &fnpb.StateClearRequest{},
-	// 	},
-	// }
-	// _, err := localChannel.Send(req1)
-	// if err != nil {
-	// 	r.Close()
-	// 	return 0, err
-	// }
+	req1 := &fnpb.StateRequest{
+		// Id: set by StateChannel
+		InstructionId: string(r.instID),
+		StateKey:      r.key,
+		Request: &fnpb.StateRequest_Clear{
+			Clear: &fnpb.StateClearRequest{},
+		},
+	}
+	_, err := localChannel.Send(req1)
+	if err != nil {
+		r.Close()
+		return 0, err
+	}
 
 	// TODO - aside from needing to split this out into its own thing that doesn't completely blow over the existing side input stuff
 	// this only correctly sets the state the first time. Basically, this whole section needs work. But it does something sorta.
@@ -328,7 +328,7 @@ func (r *stateKeyReader) Write(buf []byte) (int, error) {
 			},
 		},
 	}
-	_, err := localChannel.Send(req)
+	_, err = localChannel.Send(req)
 	if err != nil {
 		r.Close()
 		return 0, err
@@ -452,6 +452,7 @@ func (c *StateChannel) read(ctx context.Context) {
 	for {
 		// Closing the context will have an error return from this call.
 		msg, err := c.client.Recv()
+		log.Debugf(ctx, "Receiving message %v", msg)
 		if err != nil {
 			c.terminateStreamOnError(err)
 			if err == io.EOF {
@@ -492,8 +493,10 @@ func (c *StateChannel) write(ctx context.Context) {
 		case <-c.DoneCh: // Close the goroutine on context cancel.
 			return
 		}
+		log.Debugf(ctx, "Sending request %v", req)
 		err = c.client.Send(req)
 		if err != nil {
+			log.Warnf(ctx, "Received error %v", err)
 			id = req.Id
 			break // non-nil errors mean the stream is broken and can't be re-used.
 		}

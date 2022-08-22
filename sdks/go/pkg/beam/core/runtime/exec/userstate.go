@@ -23,7 +23,6 @@ import (
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/graph/coder"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/state"
 	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/typex"
-	"github.com/apache/beam/sdks/v2/go/pkg/beam/log"
 )
 
 type stateProvider struct {
@@ -106,20 +105,15 @@ func (s *stateProvider) WriteValueState(val state.Transaction) error {
 
 // ReadBagState reads a ReadBagState state from the State API
 func (s *stateProvider) ReadBagState(userStateID string) ([]interface{}, []state.Transaction, error) {
-	log.Debug(s.ctx, "TEST1")
 	initialValue, ok := s.initialBagByKey[userStateID]
-	log.Debug(s.ctx, "TEST2")
 	if !ok {
-		log.Debug(s.ctx, "TEST3")
 		initialValue = []interface{}{}
 		rw, err := s.getReader(userStateID)
 		if err != nil {
 			return nil, nil, err
 		}
-		log.Debug(s.ctx, "TEST4")
 		dec := MakeElementDecoder(coder.SkipW(s.codersByKey[userStateID]))
 		for err == nil {
-			log.Debug(s.ctx, "TEST5")
 			var resp *FullValue
 			resp, err = dec.Decode(rw)
 			if err == nil {

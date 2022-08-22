@@ -26,6 +26,7 @@ import (
 
 func init() {
 	register.DoFn3x1[state.Provider, string, int, string](&valueStateFn{})
+	register.Emitter2[string, int]()
 }
 
 // TruncateFn is an SDF.

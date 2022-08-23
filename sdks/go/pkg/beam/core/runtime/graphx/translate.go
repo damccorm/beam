@@ -493,6 +493,18 @@ func (m *marshaller) addMultiEdge(edge NamedEdge) ([]string, error) {
 							Urn: URNBagUserState,
 						},
 					}
+				case state.StateTypeCombining:
+					stateSpecs[ps.StateKey()] = &pipepb.StateSpec{
+						Spec: &pipepb.StateSpec_CombiningSpec{
+							CombiningSpec: &pipepb.CombiningStateSpec{
+								AccumulatorCoderId: coderID,
+								// TODO - add FunctionSpec for combiner if needed (I don't think I need it)
+							},
+						},
+						Protocol: &pipepb.FunctionSpec{
+							Urn: URNBagUserState,
+						},
+					}
 				default:
 					return nil, errors.Errorf("State type %v not recognized for state %v", ps.StateKey(), ps)
 				}

@@ -262,7 +262,7 @@ func (s *Combining[T1, T2, T3]) Add(p Provider, val T2) error {
 		return p.WriteValueState(Transaction{
 			Key:  s.Key,
 			Type: TransactionTypeSet,
-			Val:  acc,
+			Val:  val,
 		})
 	}
 

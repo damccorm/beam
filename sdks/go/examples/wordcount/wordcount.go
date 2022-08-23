@@ -72,6 +72,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/apache/beam/sdks/v2/go/pkg/beam"
@@ -121,6 +122,56 @@ func init() {
 	register.DoFn3x0[context.Context, string, func(string, int)](&extractFn{})
 	register.DoFn3x1[state.Provider, string, int, string](&formatFn{})
 	register.Emitter2[string, int]()
+	register.Combiner1[int](&accum1{})
+	register.Combiner2[string, int](&accum2{})
+	register.Combiner2[string, int](&accum3{})
+	register.Combiner1[int](&accum4{})
+}
+
+type accum1 struct{}
+
+func (ac *accum1) MergeAccumulators(a, b int) int {
+	return a + b
+}
+
+type accum2 struct{}
+
+func (ac *accum2) MergeAccumulators(a, b string) string {
+	ai, _ := strconv.Atoi(a)
+	bi, _ := strconv.Atoi(b)
+	return strconv.Itoa(ai + bi)
+}
+
+func (ac *accum2) ExtractOutput(a string) int {
+	ai, _ := strconv.Atoi(a)
+	return ai
+}
+
+type accum3 struct{}
+
+func (ac *accum3) CreateAccumulator() string {
+	return "0"
+}
+
+func (ac *accum3) MergeAccumulators(a string, b string) string {
+	ai, _ := strconv.Atoi(a)
+	bi, _ := strconv.Atoi(b)
+	return strconv.Itoa(ai + bi)
+}
+
+func (ac *accum3) ExtractOutput(a string) int {
+	ai, _ := strconv.Atoi(a)
+	return ai
+}
+
+type accum4 struct{}
+
+func (ac *accum4) AddInput(a, b int) int {
+	return a + b
+}
+
+func (ac *accum4) MergeAccumulators(a, b int) int {
+	return a + b
 }
 
 var (
@@ -152,18 +203,42 @@ func (f *extractFn) ProcessElement(ctx context.Context, line string, emit func(s
 }
 
 type formatFn struct {
+	State0 state.Combining[int, int, int]
 	State1 state.Combining[int, int, int]
+	State2 state.Combining[string, string, int]
+	State3 state.Combining[string, string, int]
+	State4 state.Combining[int, int, int]
 }
 
 // When this works, the POC is done
 // formatFn is a DoFn that formats a word and its count as a string.
 func (f *formatFn) ProcessElement(s state.Provider, w string, c int) string {
-	i, _, err := f.State1.Read(s)
+	i, _, err := f.State0.Read(s)
+	if err != nil {
+		panic(err)
+	}
+	f.State0.Add(s, 1)
+	i1, _, err := f.State1.Read(s)
 	if err != nil {
 		panic(err)
 	}
 	f.State1.Add(s, 1)
-	return fmt.Sprintf("%s(%v): %v", w, i, c)
+	i2, _, err := f.State2.Read(s)
+	if err != nil {
+		panic(err)
+	}
+	f.State2.Add(s, "1")
+	i3, _, err := f.State3.Read(s)
+	if err != nil {
+		panic(err)
+	}
+	f.State3.Add(s, "1")
+	i4, _, err := f.State4.Read(s)
+	if err != nil {
+		panic(err)
+	}
+	f.State4.Add(s, 1)
+	return fmt.Sprintf("%s(%v %v %v %v %v): %v", w, i, i1, i2, i3, i4, c)
 }
 
 // Concept #4: A composite PTransform is a Go function that adds
@@ -205,9 +280,12 @@ func main() {
 
 	lines := textio.Read(s, *input)
 	counted := CountWords(s, lines)
-	formatted := beam.ParDo(s, &formatFn{State1: state.MakeCombiningState[int, int, int]("key1", func(a, b int) int {
+	formatted := beam.ParDo(s, &formatFn{State0: state.MakeCombiningState[int, int, int]("key0", func(a, b int) int {
 		return a + b
-	})}, counted)
+	}), State1: state.Combining[int, int, int](state.MakeCombiningState[int, int, int]("key1", &accum1{})),
+		State2: state.Combining[string, string, int](state.MakeCombiningState[string, string, int]("key2", &accum2{})),
+		State3: state.Combining[string, string, int](state.MakeCombiningState[string, string, int]("key3", &accum3{})),
+		State4: state.Combining[int, int, int](state.MakeCombiningState[int, int, int]("key4", &accum4{}))}, counted)
 	textio.Write(s, *output, formatted)
 
 	// Concept #1: The beamx.Run convenience wrapper allows a number of

@@ -494,11 +494,31 @@ func (m *marshaller) addMultiEdge(edge NamedEdge) ([]string, error) {
 						},
 					}
 				case state.StateTypeCombining:
+					cps := ps.(state.CombiningPipelineState).GetCombineFn()
+					f, err := graph.NewFn(cps)
+					if err != nil {
+						return handleErr(err)
+					}
+					cf, err := graph.AsCombineFn(f)
+					if err != nil {
+						return handleErr(err)
+					}
+					me := graph.MultiEdge{
+						Op:        graph.Combine,
+						CombineFn: cf,
+					}
+					mustEncodeMultiEdge, err := mustEncodeMultiEdgeBase64(&me)
+					if err != nil {
+						return handleErr(err)
+					}
 					stateSpecs[ps.StateKey()] = &pipepb.StateSpec{
 						Spec: &pipepb.StateSpec_CombiningSpec{
 							CombiningSpec: &pipepb.CombiningStateSpec{
 								AccumulatorCoderId: coderID,
-								// TODO - add FunctionSpec for combiner if needed (I don't think I need it)
+								CombineFn: &pipepb.FunctionSpec{
+									Urn:     "beam:combinefn:gosdk:v1",
+									Payload: []byte(mustEncodeMultiEdge),
+								},
 							},
 						},
 						Protocol: &pipepb.FunctionSpec{

@@ -19,6 +19,8 @@ package state
 import (
 	"fmt"
 	"reflect"
+
+	"github.com/apache/beam/sdks/v2/go/pkg/beam/core/util/reflectx"
 )
 
 // TransactionTypeEnum represents the type of state transaction (e.g. set, clear)
@@ -66,6 +68,10 @@ type Provider interface {
 	WriteValueState(val Transaction) error
 	ReadBagState(id string) ([]interface{}, []Transaction, error)
 	WriteBagState(val Transaction) error
+	CreateAccumulatorFn(userStateID string) reflectx.Func
+	AddInputFn(userStateID string) reflectx.Func
+	MergeAccumulatorsFn(userStateID string) reflectx.Func
+	ExtractOutputFn(userStateID string) reflectx.Func
 }
 
 // PipelineState is an interface representing different kinds of PipelineState (currently just state.Value).
@@ -74,6 +80,12 @@ type PipelineState interface {
 	StateKey() string
 	CoderType() reflect.Type
 	StateType() StateTypeEnum
+}
+
+// CombiningPipelineState is an interface representing combining pipeline state.
+// It is primarily meant for Beam packages to use and is probably not useful for most pipeline authors.
+type CombiningPipelineState interface {
+	GetCombineFn() interface{}
 }
 
 // Value is used to read and write global pipeline state representing a single value.
@@ -232,11 +244,8 @@ type ExtractOutput[T1, T3 any] interface {
 // It uses 3 generic values, [T1, T2, T3], to represent the accumulator, input, and output types respectively.
 // Key represents the key used to lookup this state.
 type Combining[T1, T2, T3 any] struct {
-	Key                     string
-	createAccumulatorStruct *CreateAccumulator[T1]
-	addInputStruct          *AddInput[T1, T2]
-	extractOutputStruct     *ExtractOutput[T1, T3]
-	AddInputFn              func(T1, T2) T1
+	Key     string
+	accumFn interface{}
 }
 
 // Add is used to write add an element to the combining pipeline state.
@@ -257,20 +266,36 @@ func (s *Combining[T1, T2, T3]) Add(p Provider, val T2) error {
 		})
 	}
 
-	if s.addInputStruct != nil {
+	if ai := p.AddInputFn(s.Key); ai != nil {
+		var newVal interface{}
+		if f, ok := ai.(reflectx.Func2x1); ok {
+			newVal = f.Call2x1(acc, val)
+		} else {
+			newVal = f.Call([]interface{}{acc, val})[0]
+		}
 		return p.WriteValueState(Transaction{
 			Key:  s.Key,
 			Type: TransactionTypeSet,
-			Val:  (*s.addInputStruct).AddInput(acc.(T1), val),
-		})
-	} else if s.AddInputFn != nil {
-		return p.WriteValueState(Transaction{
-			Key:  s.Key,
-			Type: TransactionTypeSet,
-			Val:  s.AddInputFn(acc.(T1), val),
+			Val:  newVal,
 		})
 	}
-	panic(fmt.Sprintf("AddInput must be defined on accumulator %v", s))
+	// If AddInput isn't defined, that means we must just have one accumulator type identical to the input type.
+	if ma := p.MergeAccumulatorsFn(s.Key); ma != nil {
+		var newVal interface{}
+		if f, ok := ma.(reflectx.Func2x1); ok {
+			newVal = f.Call2x1(acc, val)
+		} else {
+			newVal = f.Call([]interface{}{acc, val})[0]
+		}
+		return p.WriteValueState(Transaction{
+			Key:  s.Key,
+			Type: TransactionTypeSet,
+			Val:  newVal,
+		})
+	}
+
+	// Should be taken care of by previous validation
+	panic(fmt.Sprintf("MergeAccumulators must be defined on accumulator %v", s))
 }
 
 // Read is used to read this instance of global pipeline state representing a combiner.
@@ -282,8 +307,12 @@ func (s *Combining[T1, T2, T3]) Read(p Provider) (T3, bool, error) {
 		return val, ok, err
 	}
 
-	if s.extractOutputStruct != nil {
-		return (*s.extractOutputStruct).ExtractOutput(acc.(T1)), true, nil
+	if eo := p.ExtractOutputFn(s.Key); eo != nil {
+		f, ok := eo.(reflectx.Func1x1)
+		if ok {
+			return f.Call1x1(acc).(T3), true, nil
+		}
+		return f.Call([]interface{}{acc})[0].(T3), true, nil
 	}
 
 	return acc.(T3), true, nil
@@ -306,8 +335,12 @@ func (s *Combining[T1, T2, T3]) readAccumulator(p Provider) (interface{}, bool, 
 		}
 	}
 	if cur == nil {
-		if s.createAccumulatorStruct != nil {
-			return (*s.createAccumulatorStruct).CreateAccumulator(), false, nil
+		if ca := p.CreateAccumulatorFn(s.Key); ca != nil {
+			f, ok := ca.(reflectx.Func0x1)
+			if ok {
+				return f.Call0x1(), true, nil
+			}
+			return f.Call([]interface{}{})[0], true, nil
 		}
 		var val T1
 		return val, false, nil
@@ -336,42 +369,17 @@ func (s Combining[T1, T2, T3]) StateType() StateTypeEnum {
 	return StateTypeCombining
 }
 
+func (s Combining[T1, T2, T3]) GetCombineFn() interface{} {
+	return s.accumFn
+}
+
 // MakeCombiningState is a factory function to create an instance of Combining state with the given key and combiner
 // when the combiner may have different types for its accumulator, input, and output.
 // Takes 3 generic constraints [T1, T2, T3 any] representing the accumulator/input/output types respectively.
 // If no accumulator or output types are defined, use the input type.
 func MakeCombiningState[T1, T2, T3 any](k string, combiner interface{}) Combining[T1, T2, T3] {
-	if cmb, ok := combiner.(func(T1, T2) T1); ok {
-		return Combining[T1, T2, T3]{
-			Key:        k,
-			AddInputFn: cmb,
-		}
+	return Combining[T1, T2, T3]{
+		Key:     k,
+		accumFn: combiner,
 	}
-
-	c := Combining[T1, T2, T3]{
-		Key: k,
-	}
-
-	if ca, ok := combiner.(CreateAccumulator[T1]); ok {
-		c.createAccumulatorStruct = &ca
-	} else {
-		// TODO - validate that no create accumulator function is defined
-	}
-	if ai, ok := combiner.(AddInput[T1, T2]); ok {
-		c.AddInputFn = ai.AddInput
-	} else {
-		var t1 T1
-		var t2 T2
-		type1 := reflect.TypeOf(t1)
-		type2 := reflect.TypeOf(t2)
-		panic(fmt.Sprintf("Combiner struct %v must have AddInput(%v, %v) %v defined", combiner, type1, type2, type1))
-	}
-	if ea, ok := combiner.(ExtractOutput[T1, T3]); ok {
-		// fn := ea.ExtractOutput
-		c.extractOutputStruct = &ea
-	} else {
-		// TODO - validate that no extractoutput function is defined
-	}
-
-	return c
 }

@@ -322,7 +322,7 @@ func (c *control) getOrCreatePlan(bdID bundleDescriptorID) (*exec.Plan, error) {
 		newPlan, err := exec.UnmarshalPlan(desc)
 		if err != nil {
 			c.mu.Unlock()
-			return nil, errors.WithContextf(err, "invalid bundle desc: %v\n%v\n", bdID, desc.String())
+			return nil, errors.WithContextf(err, "invalid bundle desc")
 		}
 		plan = newPlan
 	}

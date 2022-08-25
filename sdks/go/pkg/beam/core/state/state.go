@@ -42,6 +42,8 @@ const (
 	TypeBag TypeEnum = 1
 	// TypeCombining represents a combining state
 	TypeCombining TypeEnum = 2
+	// TypeMap represents a map state
+	TypeMap TypeEnum = 3
 )
 
 var (
@@ -78,6 +80,7 @@ type Provider interface {
 // It is primarily meant for Beam packages to use and is probably not useful for most pipeline authors.
 type PipelineState interface {
 	StateKey() string
+	KeyCoderType() reflect.Type
 	CoderType() reflect.Type
 	StateType() TypeEnum
 }
@@ -135,6 +138,11 @@ func (s Value[T]) StateKey() string {
 		panic("Value state exists on struct but has not been initialized with a key.")
 	}
 	return s.Key
+}
+
+// KeyCoderType returns nil since Value types aren't keyed.
+func (s Value[T]) KeyCoderType() reflect.Type {
+	return nil
 }
 
 // CoderType returns the type of the value state which should be used for a coder.
@@ -205,6 +213,11 @@ func (s Bag[T]) StateKey() string {
 		panic("Value state exists on struct but has not been initialized with a key.")
 	}
 	return s.Key
+}
+
+// KeyCoderType returns nil since Bag types aren't keyed.
+func (s Bag[T]) KeyCoderType() reflect.Type {
+	return nil
 }
 
 // CoderType returns the type of the bag state which should be used for a coder.
@@ -341,6 +354,11 @@ func (s Combining[T1, T2, T3]) StateKey() string {
 		panic("Value state exists on struct but has not been initialized with a key.")
 	}
 	return s.Key
+}
+
+// KeyCoderType returns nil since combining state types aren't keyed.
+func (s Combining[T1, T2, T3]) KeyCoderType() reflect.Type {
+	return nil
 }
 
 // CoderType returns the type of the bag state which should be used for a coder.

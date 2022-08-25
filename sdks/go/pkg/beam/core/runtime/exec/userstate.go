@@ -16,6 +16,7 @@
 package exec
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -41,6 +42,7 @@ type stateProvider struct {
 	appendersByKey    map[string]io.Writer
 	clearersByKey     map[string]io.Writer
 	codersByKey       map[string]*coder.Coder
+	keyCodersByID     map[string]*coder.Coder
 	combineFnsByKey   map[string]*graph.CombineFn
 }
 
@@ -48,7 +50,7 @@ type stateProvider struct {
 func (s *stateProvider) ReadValueState(userStateID string) (interface{}, []state.Transaction, error) {
 	initialValue, ok := s.initialValueByKey[userStateID]
 	if !ok {
-		rw, err := s.getReader(userStateID)
+		rw, err := s.getBagReader(userStateID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -75,13 +77,13 @@ func (s *stateProvider) ReadValueState(userStateID string) (interface{}, []state
 // WriteValueState writes a value state to the State API
 // For value states, this is done by clearing a bag state and writing a value to it.
 func (s *stateProvider) WriteValueState(val state.Transaction) error {
-	cl, err := s.getClearer(val.Key)
+	cl, err := s.getBagClearer(val.Key)
 	if err != nil {
 		return err
 	}
 	cl.Write([]byte{})
 
-	ap, err := s.getAppender(val.Key)
+	ap, err := s.getBagAppender(val.Key)
 	if err != nil {
 		return err
 	}
@@ -106,12 +108,12 @@ func (s *stateProvider) WriteValueState(val state.Transaction) error {
 	return nil
 }
 
-// ReadBagState reads a ReadBagState state from the State API
+// ReadBagState reads a BagState state from the State API
 func (s *stateProvider) ReadBagState(userStateID string) ([]interface{}, []state.Transaction, error) {
 	initialValue, ok := s.initialBagByKey[userStateID]
 	if !ok {
 		initialValue = []interface{}{}
-		rw, err := s.getReader(userStateID)
+		rw, err := s.getBagReader(userStateID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -136,10 +138,9 @@ func (s *stateProvider) ReadBagState(userStateID string) ([]interface{}, []state
 	return initialValue, transactions, nil
 }
 
-// WriteValueState writes a value state to the State API
-// For value states, this is done by clearing a bag state and writing a value to it.
+// WriteBagState writes a bag state to the State API
 func (s *stateProvider) WriteBagState(val state.Transaction) error {
-	ap, err := s.getAppender(val.Key)
+	ap, err := s.getBagAppender(val.Key)
 	if err != nil {
 		return err
 	}
@@ -196,7 +197,7 @@ func (s *stateProvider) ExtractOutputFn(userStateID string) reflectx.Func {
 	return nil
 }
 
-func (s *stateProvider) getReader(userStateID string) (io.ReadCloser, error) {
+func (s *stateProvider) getBagReader(userStateID string) (io.ReadCloser, error) {
 	if r, ok := s.readersByKey[userStateID]; ok {
 		return r, nil
 	}
@@ -208,7 +209,7 @@ func (s *stateProvider) getReader(userStateID string) (io.ReadCloser, error) {
 	return s.readersByKey[userStateID], nil
 }
 
-func (s *stateProvider) getAppender(userStateID string) (io.Writer, error) {
+func (s *stateProvider) getBagAppender(userStateID string) (io.Writer, error) {
 	if w, ok := s.appendersByKey[userStateID]; ok {
 		return w, nil
 	}
@@ -220,7 +221,7 @@ func (s *stateProvider) getAppender(userStateID string) (io.Writer, error) {
 	return s.appendersByKey[userStateID], nil
 }
 
-func (s *stateProvider) getClearer(userStateID string) (io.Writer, error) {
+func (s *stateProvider) getBagClearer(userStateID string) (io.Writer, error) {
 	if w, ok := s.clearersByKey[userStateID]; ok {
 		return w, nil
 	}
@@ -230,6 +231,77 @@ func (s *stateProvider) getClearer(userStateID string) (io.Writer, error) {
 	}
 	s.clearersByKey[userStateID] = w
 	return s.clearersByKey[userStateID], nil
+}
+
+func (s *stateProvider) getMultiMapReader(userStateID string, key interface{}) (io.ReadCloser, error) {
+	ek, err := s.encodeKey(userStateID, key)
+	if err != nil {
+		return nil, err
+	}
+	r, err := s.sr.OpenMultimapUserStateReader(s.ctx, s.SID, userStateID, s.elementKey, s.window, ek)
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (s *stateProvider) getMultiMapAppender(userStateID string, key interface{}) (io.Writer, error) {
+	ek, err := s.encodeKey(userStateID, key)
+	if err != nil {
+		return nil, err
+	}
+	w, err := s.sr.OpenMultimapUserStateAppender(s.ctx, s.SID, userStateID, s.elementKey, s.window, ek)
+	if err != nil {
+		return nil, err
+	}
+	return w, nil
+}
+
+func (s *stateProvider) getMultiMapClearer(userStateID string, key interface{}) (io.Writer, error) {
+	ek, err := s.encodeKey(userStateID, key)
+	if err != nil {
+		return nil, err
+	}
+	w, err := s.sr.OpenMultimapUserStateClearer(s.ctx, s.SID, userStateID, s.elementKey, s.window, ek)
+	if err != nil {
+		return nil, err
+	}
+	return w, nil
+}
+
+func (s *stateProvider) getMultiMapKeyReader(userStateID string) (io.ReadCloser, error) {
+	if r, ok := s.readersByKey[userStateID]; ok {
+		return r, nil
+	}
+	r, err := s.sr.OpenMultimapKeysUserStateReader(s.ctx, s.SID, userStateID, s.elementKey, s.window)
+	if err != nil {
+		return nil, err
+	}
+	s.readersByKey[userStateID] = r
+	return s.readersByKey[userStateID], nil
+}
+
+func (s *stateProvider) getMultiMapKeyClearer(userStateID string) (io.Writer, error) {
+	if w, ok := s.clearersByKey[userStateID]; ok {
+		return w, nil
+	}
+	w, err := s.sr.OpenMultimapKeysUserStateClearer(s.ctx, s.SID, userStateID, s.elementKey, s.window)
+	if err != nil {
+		return nil, err
+	}
+	s.clearersByKey[userStateID] = w
+	return s.clearersByKey[userStateID], nil
+}
+
+func (s *stateProvider) encodeKey(userStateID string, key interface{}) ([]byte, error) {
+	fv := FullValue{Elm: key}
+	enc := MakeElementEncoder(coder.SkipW(s.keyCodersByID[userStateID]))
+	var b bytes.Buffer
+	err := enc.Encode(&fv, &b)
+	if err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
 }
 
 // UserStateAdapter provides a state provider to be used for user state.
@@ -242,13 +314,14 @@ type userStateAdapter struct {
 	wc                 WindowEncoder
 	kc                 ElementEncoder
 	stateIDToCoder     map[string]*coder.Coder
+	stateIDToKeyCoder  map[string]*coder.Coder
 	stateIDToCombineFn map[string]*graph.CombineFn
 	c                  *coder.Coder
 }
 
 // NewUserStateAdapter returns a user state adapter for the given StreamID and coder.
 // It expects a W<V> or W<KV<K,V>> coder, because the protocol requires windowing information.
-func NewUserStateAdapter(sid StreamID, c *coder.Coder, stateIDToCoder map[string]*coder.Coder, stateIDToCombineFn map[string]*graph.CombineFn) UserStateAdapter {
+func NewUserStateAdapter(sid StreamID, c *coder.Coder, stateIDToCoder map[string]*coder.Coder, stateIDToKeyCoder map[string]*coder.Coder, stateIDToCombineFn map[string]*graph.CombineFn) UserStateAdapter {
 	if !coder.IsW(c) {
 		panic(fmt.Sprintf("expected WV coder for user state %v: %v", sid, c))
 	}
@@ -258,7 +331,7 @@ func NewUserStateAdapter(sid StreamID, c *coder.Coder, stateIDToCoder map[string
 	if coder.IsKV(coder.SkipW(c)) {
 		kc = MakeElementEncoder(coder.SkipW(c).Components[0])
 	}
-	return &userStateAdapter{sid: sid, wc: wc, kc: kc, c: c, stateIDToCoder: stateIDToCoder, stateIDToCombineFn: stateIDToCombineFn}
+	return &userStateAdapter{sid: sid, wc: wc, kc: kc, c: c, stateIDToCoder: stateIDToCoder, stateIDToKeyCoder: stateIDToKeyCoder, stateIDToCombineFn: stateIDToCombineFn}
 }
 
 // NewStateProvider creates a stateProvider with the ability to talk to the state API.
@@ -289,6 +362,7 @@ func (s *userStateAdapter) NewStateProvider(ctx context.Context, reader StateRea
 		clearersByKey:     make(map[string]io.Writer),
 		combineFnsByKey:   s.stateIDToCombineFn,
 		codersByKey:       s.stateIDToCoder,
+		keyCodersByID:     s.stateIDToKeyCoder,
 	}
 
 	return sp, nil

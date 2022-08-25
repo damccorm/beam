@@ -35,15 +35,17 @@ type stateProvider struct {
 	elementKey []byte
 	window     []byte
 
-	transactionsByKey map[string][]state.Transaction
-	initialValueByKey map[string]interface{}
-	initialBagByKey   map[string][]interface{}
-	readersByKey      map[string]io.ReadCloser
-	appendersByKey    map[string]io.Writer
-	clearersByKey     map[string]io.Writer
-	codersByKey       map[string]*coder.Coder
-	keyCodersByID     map[string]*coder.Coder
-	combineFnsByKey   map[string]*graph.CombineFn
+	transactionsByKey     map[string][]state.Transaction
+	initialValueByKey     map[string]interface{}
+	initialBagByKey       map[string][]interface{}
+	initialMapValuesByKey map[string]map[string]interface{}
+	initialMapKeysByKey   map[string][]interface{}
+	readersByKey          map[string]io.ReadCloser
+	appendersByKey        map[string]io.Writer
+	clearersByKey         map[string]io.Writer
+	codersByKey           map[string]*coder.Coder
+	keyCodersByID         map[string]*coder.Coder
+	combineFnsByKey       map[string]*graph.CombineFn
 }
 
 // ReadValueState reads a value state from the State API
@@ -153,6 +155,105 @@ func (s *stateProvider) WriteBagState(val state.Transaction) error {
 	}
 
 	// TODO(#22736) - optimize this a bit once all state types are added.
+	if transactions, ok := s.transactionsByKey[val.Key]; ok {
+		transactions = append(transactions, val)
+		s.transactionsByKey[val.Key] = transactions
+	} else {
+		s.transactionsByKey[val.Key] = []state.Transaction{val}
+	}
+
+	return nil
+}
+
+// ReadMapStateValue reads a value from the map state given a key.
+func (s *stateProvider) ReadMapStateValue(userStateID string, key interface{}) (interface{}, []state.Transaction, error) {
+	_, ok := s.initialMapValuesByKey[userStateID]
+	if !ok {
+		s.initialMapValuesByKey[userStateID] = make(map[string]interface{})
+	}
+	b, err := s.encodeKey(userStateID, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	initialValue, ok := s.initialMapValuesByKey[userStateID][string(b)]
+	if !ok {
+		rw, err := s.getMultiMapReader(userStateID, key)
+		if err != nil {
+			return nil, nil, err
+		}
+		dec := MakeElementDecoder(coder.SkipW(s.codersByKey[userStateID]))
+		resp, err := dec.Decode(rw)
+		if err != nil && err != io.EOF {
+			return nil, nil, err
+		}
+		if resp == nil {
+			return nil, []state.Transaction{}, nil
+		}
+		initialValue = resp.Elm
+		s.initialValueByKey[userStateID] = initialValue
+	}
+
+	transactions, ok := s.transactionsByKey[userStateID]
+	if !ok {
+		transactions = []state.Transaction{}
+	}
+
+	return initialValue, transactions, nil
+}
+
+// ReadMapStateKeys reads all the keys in a map state.
+func (s *stateProvider) ReadMapStateKeys(userStateID string) ([]interface{}, []state.Transaction, error) {
+	initialValue, ok := s.initialMapKeysByKey[userStateID]
+	if !ok {
+		initialValue = []interface{}{}
+		rw, err := s.getMultiMapKeyReader(userStateID)
+		if err != nil {
+			return nil, nil, err
+		}
+		dec := MakeElementDecoder(coder.SkipW(s.keyCodersByID[userStateID]))
+		for err == nil {
+			var resp *FullValue
+			resp, err = dec.Decode(rw)
+			if err == nil {
+				initialValue = append(initialValue, resp.Elm)
+			} else if err != io.EOF {
+				return nil, nil, err
+			}
+		}
+		s.initialMapKeysByKey[userStateID] = initialValue
+	}
+
+	transactions, ok := s.transactionsByKey[userStateID]
+	if !ok {
+		transactions = []state.Transaction{}
+	}
+
+	return initialValue, transactions, nil
+}
+
+// WriteMapState writes a key value pair to the global map state.
+func (s *stateProvider) WriteMapState(val state.Transaction) error {
+	cl, err := s.getMultiMapClearer(val.Key, val.MapKey)
+	if err != nil {
+		return err
+	}
+	cl.Write([]byte{})
+
+	ap, err := s.getMultiMapAppender(val.Key, val.MapKey)
+	if err != nil {
+		return err
+	}
+	fv := FullValue{Elm: val.Val}
+	// TODO(#22736) - consider caching this a proprty of stateProvider
+	enc := MakeElementEncoder(coder.SkipW(s.codersByKey[val.Key]))
+	err = enc.Encode(&fv, ap)
+	if err != nil {
+		return err
+	}
+
+	// TODO(#22736) - optimize this a bit once all state types are added. In the case of sets/clears,
+	// we can remove the transactions. We can also consider combining other transactions on read (or sooner)
+	// so that we don't need to use as much memory/time replaying transactions.
 	if transactions, ok := s.transactionsByKey[val.Key]; ok {
 		transactions = append(transactions, val)
 		s.transactionsByKey[val.Key] = transactions
@@ -349,20 +450,22 @@ func (s *userStateAdapter) NewStateProvider(ctx context.Context, reader StateRea
 		return stateProvider{}, err
 	}
 	sp := stateProvider{
-		ctx:               ctx,
-		sr:                reader,
-		SID:               s.sid,
-		elementKey:        elementKey,
-		window:            win,
-		transactionsByKey: make(map[string][]state.Transaction),
-		initialValueByKey: make(map[string]interface{}),
-		initialBagByKey:   make(map[string][]interface{}),
-		readersByKey:      make(map[string]io.ReadCloser),
-		appendersByKey:    make(map[string]io.Writer),
-		clearersByKey:     make(map[string]io.Writer),
-		combineFnsByKey:   s.stateIDToCombineFn,
-		codersByKey:       s.stateIDToCoder,
-		keyCodersByID:     s.stateIDToKeyCoder,
+		ctx:                   ctx,
+		sr:                    reader,
+		SID:                   s.sid,
+		elementKey:            elementKey,
+		window:                win,
+		transactionsByKey:     make(map[string][]state.Transaction),
+		initialValueByKey:     make(map[string]interface{}),
+		initialBagByKey:       make(map[string][]interface{}),
+		initialMapValuesByKey: make(map[string]map[string]interface{}),
+		initialMapKeysByKey:   make(map[string][]interface{}),
+		readersByKey:          make(map[string]io.ReadCloser),
+		appendersByKey:        make(map[string]io.Writer),
+		clearersByKey:         make(map[string]io.Writer),
+		combineFnsByKey:       s.stateIDToCombineFn,
+		codersByKey:           s.stateIDToCoder,
+		keyCodersByID:         s.stateIDToKeyCoder,
 	}
 
 	return sp, nil

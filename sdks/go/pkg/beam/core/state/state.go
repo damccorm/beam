@@ -56,9 +56,10 @@ var (
 // Transaction is used to represent a pending state transaction. This should not be manipulated directly;
 // it is primarily used for implementations of the Provider interface to talk to the various State objects.
 type Transaction struct {
-	Key  string
-	Type TransactionTypeEnum
-	Val  interface{}
+	Key    string
+	Type   TransactionTypeEnum
+	MapKey interface{}
+	Val    interface{}
 }
 
 // Provider represents the DoFn parameter used to get and manipulate pipeline state
@@ -74,6 +75,9 @@ type Provider interface {
 	AddInputFn(userStateID string) reflectx.Func
 	MergeAccumulatorsFn(userStateID string) reflectx.Func
 	ExtractOutputFn(userStateID string) reflectx.Func
+	ReadMapStateValue(userStateID string, key interface{}) (interface{}, []Transaction, error)
+	ReadMapStateKeys(userStateID string) ([]interface{}, []Transaction, error)
+	WriteMapState(val Transaction) error
 }
 
 // PipelineState is an interface representing different kinds of PipelineState (currently just state.Value).
@@ -384,5 +388,117 @@ func MakeCombiningState[T1, T2, T3 any](k string, combiner interface{}) Combinin
 	return Combining[T1, T2, T3]{
 		Key:     k,
 		accumFn: combiner,
+	}
+}
+
+// Map is used to read and write global pipeline state representing a map.
+// Key represents the key used to lookup this state (not the key of map entries).
+type Map[K comparable, V any] struct {
+	Key string
+}
+
+// Put is used to write a key/value pair to this instance of global map state.
+func (s *Map[K, V]) Put(p Provider, key K, val V) error {
+	return p.WriteMapState(Transaction{
+		Key:    s.Key,
+		Type:   TransactionTypeSet,
+		MapKey: key,
+		Val:    val,
+	})
+}
+
+// Keys is used to read the keys of this map state.
+// When a value is not found, returns an empty list and false.
+func (s *Map[K, V]) Keys(p Provider) ([]K, bool, error) {
+	// This replays any writes that have happened to this value since we last read
+	// For more detail, see "State Transactionality" below for buffered transactions
+	initialValue, bufferedTransactions, err := p.ReadBagState(s.Key)
+	if err != nil {
+		return []K{}, false, err
+	}
+	cur := []K{}
+	for _, v := range initialValue {
+		cur = append(cur, v.(K))
+	}
+	for _, t := range bufferedTransactions {
+		switch t.Type {
+		case TransactionTypeAppend:
+			seen := false
+			mk := t.MapKey.(K)
+			for _, k := range cur {
+				if k == mk {
+					seen = true
+				}
+			}
+			if !seen {
+				cur = append(cur, mk)
+			}
+		case TransactionTypeClear:
+			cur = []K{}
+		}
+	}
+	if len(cur) == 0 {
+		return cur, false, nil
+	}
+	return cur, true, nil
+}
+
+// Get is used to read a value given a key.
+// When a value is not found, returns the 0 value and false.
+func (s *Map[K, V]) Get(p Provider, key K) (V, bool, error) {
+	// This replays any writes that have happened to this value since we last read
+	// For more detail, see "State Transactionality" below for buffered transactions
+	cur, bufferedTransactions, err := p.ReadMapStateValue(s.Key, key)
+	if err != nil {
+		var val V
+		return val, false, err
+	}
+	for _, t := range bufferedTransactions {
+		switch t.Type {
+		case TransactionTypeSet:
+			if t.MapKey.(K) == key {
+				cur = t.Val
+			}
+		case TransactionTypeClear:
+			cur = nil
+		}
+	}
+	if cur == nil {
+		var val V
+		return val, false, nil
+	}
+	return cur.(V), true, nil
+}
+
+// StateKey returns the key for this pipeline state entry.
+func (s Map[K, V]) StateKey() string {
+	if s.Key == "" {
+		// TODO(#22736) - infer the state from the member variable name during pipeline construction.
+		panic("Value state exists on struct but has not been initialized with a key.")
+	}
+	return s.Key
+}
+
+// KeyCoderType returns the type of the value state which should be used for a coder for map keys.
+func (s Map[K, V]) KeyCoderType() reflect.Type {
+	var k K
+	return reflect.TypeOf(k)
+}
+
+// CoderType returns the type of the value state which should be used for a coder for map values.
+func (s Map[K, V]) CoderType() reflect.Type {
+	var v V
+	return reflect.TypeOf(v)
+}
+
+// StateType returns the type of the state (in this case always Map).
+func (s Map[K, V]) StateType() TypeEnum {
+	return TypeMap
+}
+
+// MakeValueState is a factory function to create an instance of ValueState with the given key.
+func MakeMapState[K comparable, V any](k string) Map[K, V] {
+	return Map[K, V]{
+		Key: k,
 	}
 }

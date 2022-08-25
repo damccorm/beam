@@ -412,7 +412,7 @@ func (s *Map[K, V]) Put(p Provider, key K, val V) error {
 func (s *Map[K, V]) Keys(p Provider) ([]K, bool, error) {
 	// This replays any writes that have happened to this value since we last read
 	// For more detail, see "State Transactionality" below for buffered transactions
-	initialValue, bufferedTransactions, err := p.ReadBagState(s.Key)
+	initialValue, bufferedTransactions, err := p.ReadMapStateKeys(s.Key)
 	if err != nil {
 		return []K{}, false, err
 	}

@@ -71,6 +71,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"regexp"
 	"strings"
 
@@ -164,6 +165,10 @@ func (f *formatFn) ProcessElement(s state.Provider, w string, c int) string {
 	}
 	i++
 	err = f.State1.Put(s, w, i)
+	if err != nil {
+		panic(err)
+	}
+	err = f.State1.Put(s, fmt.Sprintf("%v%v", w, rand.Intn(100)), i)
 	if err != nil {
 		panic(err)
 	}

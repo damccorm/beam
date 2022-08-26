@@ -495,10 +495,11 @@ func (b *builder) makeLink(from string, id linkID) (Node, error) {
 							} else if ms := spec.GetMapSpec(); ms != nil {
 								cID = ms.ValueCoderId
 								kcID = ms.KeyCoderId
-							} else if ss := spec.GetSetSpec(); ms != nil {
+							} else if ss := spec.GetSetSpec(); ss != nil {
 								kcID = ss.ElementCoderId
 							} else {
-								return nil, errors.Errorf("OH NO %v", spec.GetSpec())
+								a := spec.GetSpec().(*pipepb.StateSpec_SetSpec)
+								return nil, errors.Errorf("Unrecognized state type %v", a)
 							}
 							if cID != "" {
 								c, err := b.coders.Coder(cID)

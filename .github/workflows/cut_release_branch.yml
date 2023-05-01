@@ -54,7 +54,9 @@ jobs:
     steps:
       - name: Mask Jenkins token
         run: |
-          echo "::add-mask::{{ inputs.JENKINS_TOKEN }}"
+          echo "::add-mask::$JENKINS_TOKEN"
+        env:
+          JENKINS_TOKEN: ${{ github.event.inputs.JENKINS_TOKEN }}
       - name: Validate Next Version
         run: |
           if [[ $NEXT_RELEASE =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
@@ -77,6 +79,7 @@ jobs:
             name=$(echo $obj | jq '.name')
             echo $url
             echo $name
+            echo "$JENKINS_USERNAME:$JENKINS_TOKEN $url/config.xml"
             curl --user $JENKINS_USERNAME:$JENKINS_TOKEN $url/config.xml > /tmp/config.xml
 
             if [ "$(xmllint --xpath 'string(//disabled)' /tmp/config.xml)" = "true" ]; then

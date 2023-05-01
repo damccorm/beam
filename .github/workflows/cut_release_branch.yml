@@ -90,9 +90,9 @@ jobs:
                 echo "Appending ${phrase},${name}"
                 echo "${phrase},${name}" >> /tmp/result
               fi
-            fi
 
-            rm /tmp/config.xml
+              rm /tmp/config.xml
+            fi
           done
 
           cat /tmp/result | sort | uniq | grep -i -E 'precommit|postcommit|validates|vr|example|test|gradle build' | grep -v -i -E 'load|perf|website' >> release/src/main/scripts/jenkins_jobs.txt

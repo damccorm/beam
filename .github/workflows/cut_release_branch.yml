@@ -77,6 +77,7 @@ jobs:
         run: |
           rm release/src/main/scripts/jenkins_jobs.txt
           for obj in $(curl https://ci-beam.apache.org/api/json | jq '.jobs[]' -c); do
+            echo $obj
             url=$(echo $obj | jq '.url' -r)
             name=$(echo $obj | jq '.name' -r)
             curl --user $JENKINS_USERNAME:$JENKINS_TOKEN $url/config.xml > /tmp/config.xml
@@ -84,7 +85,6 @@ jobs:
             if [ "$(xmllint --xpath 'string(//disabled)' /tmp/config.xml)" = "true" ]; then
               echo "SKIPPING $url - disabled"
             else
-              echo "ADDING $url"
               phrase=$(xmllint --xpath 'string(//triggers/org.jenkinsci.plugins.ghprb.GhprbTrigger/triggerPhrase)' /tmp/config.xml)
               echo "Appending ${phrase},${name}"
               echo "${phrase},${name}" >> /tmp/result

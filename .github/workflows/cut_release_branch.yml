@@ -71,16 +71,14 @@ jobs:
         run: |
           git config user.name $GITHUB_ACTOR
           git config user.email actions@"$RUNNER_NAME".local
+      - name: Install xmllint
+        run: apt-get install libxml2-utils
       - name: Update mass_comment.py with new Jenkins jobs
         run: |
           rm release/src/main/scripts/jenkins_jobs.txt
           for obj in $(curl https://ci-beam.apache.org/api/json | jq '.jobs[]' -c); do
-            echo $obj
             url=$(echo $obj | jq '.url' -r)
             name=$(echo $obj | jq '.name' -r)
-            echo $url
-            echo $name
-            echo "$JENKINS_USERNAME:$JENKINS_TOKEN $url/config.xml"
             curl --user $JENKINS_USERNAME:$JENKINS_TOKEN $url/config.xml > /tmp/config.xml
 
             if [ "$(xmllint --xpath 'string(//disabled)' /tmp/config.xml)" = "true" ]; then

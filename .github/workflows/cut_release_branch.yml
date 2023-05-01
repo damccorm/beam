@@ -37,6 +37,12 @@ on:
         description: Next release version
         required: true
         default: '2.XX.0'
+      JENKINS_USERNAME:
+        description: Username of the current Jenkins user. Used to update mass_comment.py with all Jenkins jobs.
+        required: true
+      JENKINS_TOKEN:
+        description: API Token for the current Jenkins user. Can be generated at https://ci-beam.apache.org/user/<user>/configure
+        required: true
 
 jobs:
   update_master:
@@ -46,6 +52,9 @@ jobs:
       NEXT_RELEASE: ${{ github.event.inputs.NEXT_VERSION }}
       SCRIPT_DIR: ./release/src/main/scripts
     steps:
+      - name: Mask Jenkins token
+        run: |
+          echo "::add-mask::{{ inputs.JENKINS_TOKEN }}"
       - name: Validate Next Version
         run: |
           if [[ $NEXT_RELEASE =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
@@ -60,6 +69,30 @@ jobs:
         run: |
           git config user.name $GITHUB_ACTOR
           git config user.email actions@"$RUNNER_NAME".local
+      - name: Update mass_comment.py with new Jenkins jobs
+        run: |
+          rm release/src/main/scripts/jenkins_jobs.txt
+          for obj in $(curl https://ci-builds.apache.org/api/json | jq '.jobs[]' -c); do
+            url=$(echo $obj | jq '.url')
+            name=$(echo $obj | jq '.name')
+            echo $url
+            echo $name
+            curl --user {{ inputs.JENKINS_USERNAME }}:{{ inputs.JENKINS_TOKEN }} $url/config.xml > /tmp/config.xml
+
+            if [ "$(xmllint --xpath 'string(//disabled)' /tmp/config.xml)" = "true" ]; then
+              echo "SKIPPING $url - disabled"
+            else
+              echo "ADDING $url"
+              phrase=$(xmllint --xpath 'string(//triggers/org.jenkinsci.plugins.ghprb.GhprbTrigger/triggerPhrase)' /tmp/config.xml)
+              echo "Appending ${phrase},${name}"
+              echo "${phrase},${name}" >> /tmp/result
+
+            fi
+
+            rm /tmp/config.xml
+          done
+
+          cat /tmp/result | sort | uniq | grep -i -E 'precommit|postcommit|validates|vr|example|test|gradle build' | grep -v -i -E 'load|perf|website' >> release/src/main/scripts/jenkins_jobs.txt
       - name: Update master branch
         run: |
           bash "${SCRIPT_DIR}/set_version.sh" "${NEXT_VERSION_IN_BASE_BRANCH}"

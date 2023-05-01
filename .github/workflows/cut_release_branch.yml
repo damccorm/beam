@@ -77,7 +77,7 @@ jobs:
             name=$(echo $obj | jq '.name')
             echo $url
             echo $name
-            curl --user {{ inputs.JENKINS_USERNAME }}:{{ inputs.JENKINS_TOKEN }} $url/config.xml > /tmp/config.xml
+            curl --user $JENKINS_USERNAME:$JENKINS_TOKEN $url/config.xml > /tmp/config.xml
 
             if [ "$(xmllint --xpath 'string(//disabled)' /tmp/config.xml)" = "true" ]; then
               echo "SKIPPING $url - disabled"
@@ -93,6 +93,9 @@ jobs:
           done
 
           cat /tmp/result | sort | uniq | grep -i -E 'precommit|postcommit|validates|vr|example|test|gradle build' | grep -v -i -E 'load|perf|website' >> release/src/main/scripts/jenkins_jobs.txt
+        env:
+          JENKINS_USERNAME: ${{ github.event.inputs.JENKINS_USERNAME }}
+          JENKINS_TOKEN: ${{ github.event.inputs.JENKINS_TOKEN }}
       - name: Update master branch
         run: |
           bash "${SCRIPT_DIR}/set_version.sh" "${NEXT_VERSION_IN_BASE_BRANCH}"

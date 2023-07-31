@@ -19,7 +19,7 @@
 
 # Apache Beam website
 
-These are the main sources of the website for Apache Beam, hosted at
+These are the maine sources of the website for Apache Beam, hosted at
 https://beam.apache.org/.
 
 ## About

@@ -228,3 +228,6 @@ class VertexAIModelHandlerJSON(ModelHandler[Any,
 
     return utils._convert_to_result(
         batch, prediction.predictions, prediction.deployed_model_id)
+
+  def batch_elements_kwargs(self):
+    return {'max_batch_size': 1}

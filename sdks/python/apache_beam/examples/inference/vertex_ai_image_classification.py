@@ -27,6 +27,7 @@ for more information.)
 import argparse
 import io
 import logging
+import time
 from typing import Iterable
 from typing import List
 from typing import Tuple
@@ -48,18 +49,6 @@ def parse_known_args(argv):
   """Parses args for the workflow."""
   parser = argparse.ArgumentParser()
   # TODO: Update this to accept a glob of files.
-  parser.add_argument(
-      '--input',
-      dest='input',
-      type=str,
-      required=True,
-      help='File glob to read images from.')
-  parser.add_argument(
-      '--output',
-      dest='output',
-      type=str,
-      required=True,
-      help='Path to save output predictions.')
   parser.add_argument(
       '--endpoint_id',
       dest='endpoint',
@@ -108,14 +97,18 @@ def read_image(image_file_name: str) -> Tuple[str, bytes]:
     return image_file_name, data
 
 
-def preprocess_image(data: bytes) -> List[float]:
+def preprocess_image(data: bytes, actual_image) -> List[float]:
   """Preprocess the image, resizing it and normalizing it before
   converting to a list.
   """
-  image = tf.io.decode_jpeg(data, channels=3)
-  image = tf.image.resize_with_pad(image, IMG_WIDTH, IMG_WIDTH)
-  image = image / 255
-  return image.numpy().tolist()
+  import random
+  actual_image[100][0][0] = random.uniform(0, 1)
+  return actual_image
+
+class TenX(beam.DoFn):
+  def process(self, element: Tuple[str, List[float]]) -> Iterable[Tuple[str, List[float]]]:
+    for i in range(30):
+        yield element
 
 
 class PostProcessor(beam.DoFn):
@@ -146,23 +139,31 @@ def run(
       experiment=known_args.experiment,
       network=known_args.vpc_network,
       private=known_args.private)
+  
+  first_ts = time.time()
+  last_ts = first_ts + 300000
+  interval = 1
 
   pipeline = test_pipeline
   if not test_pipeline:
     pipeline = beam.Pipeline(options=pipeline_options)
 
-  read_glob = pipeline | "Get glob" >> beam.Create([known_args.input])
-  read_image_name = read_glob | "Get Image Paths" >> fileio.MatchAll()
-  load_image = read_image_name | "Read Image" >> beam.Map(
-      lambda image_name: read_image(image_name.path))
+  data =  read_image('gs://world-readable-mkcq69tkcu/dannymccormick/ato-model/images/German-Shepherd.jpeg')[1]
+  image = tf.io.decode_jpeg(data, channels=3)
+  image = tf.image.resize_with_pad(image, IMG_WIDTH, IMG_WIDTH)
+  image = image / 255
+  abc = image.numpy().tolist()
+
+  read_glob = pipeline | beam.transforms.periodicsequence.PeriodicImpulse(first_ts, last_ts, fire_interval=interval, apply_windowing=True) | beam.Reshuffle()
+  load_image = read_glob | "Read Image" >> beam.Map(
+      lambda image_name: read_image('gs://world-readable-mkcq69tkcu/dannymccormick/ato-model/images/German-Shepherd.jpeg'))
   preprocess = load_image | "Preprocess Image" >> beam.MapTuple(
-      lambda img_name, img: (img_name, preprocess_image(img)))
-  predictions = preprocess | "RunInference" >> RunInference(
+      lambda img_name, img: (img_name, preprocess_image(img, abc)))
+  preprocess2 = preprocess | beam.ParDo(TenX())
+  predictions = preprocess2 | "RunInference" >> RunInference(
       KeyedModelHandler(model_handler))
-  process_output = predictions | "Process Predictions" >> beam.ParDo(
-      PostProcessor())
-  _ = process_output | "WriteOutput" >> beam.io.WriteToText(
-      known_args.output, shard_name_template='', append_trailing_newlines=True)
+  _ = predictions | "Process Predictions" >> beam.ParDo(
+      PostProcessor()) | beam.Map(print)
 
   result = pipeline.run()
   result.wait_until_finish()

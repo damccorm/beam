@@ -74,7 +74,7 @@ jobs:
         with:
           repository: apache/beam-site
           path: beam-site
-          token: ${{ github.event.inputs.REPO_TOKEN }}
+          # token: ${{ github.event.inputs.REPO_TOKEN }}
           ref: release-docs
       - name: Install Python 3.9
         uses: actions/setup-python@v5

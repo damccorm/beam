@@ -120,34 +120,34 @@ jobs:
         run: |
             ./gradlew :sdks:python:generateYamlDocs -PisRelease
             cat ${BEAM_ROOT_DIR}/sdks/python/build/yaml-ref.html
-      - name: Add canonical link into javadocs
-        uses: cicirello/javadoc-cleanup@v1
-        with:
-          path-to-root: beam/sdks/java/javadoc/build/docs/javadoc
-          base-url-path: https://beam.apache.org/releases/javadoc/current/
+      # - name: Add canonical link into javadocs
+      #   uses: cicirello/javadoc-cleanup@v1
+      #   with:
+      #     path-to-root: beam/sdks/java/javadoc/build/docs/javadoc
+      #     base-url-path: https://beam.apache.org/releases/javadoc/current/
       - name: Consolidate Release Docs to beam-site branch with symlinks
         working-directory: beam-site
         run: |
             git checkout -b $BRANCH_NAME release-docs
 
-            echo "..........Copying generated javadoc into beam-site.........."
-            cp -r ${BEAM_ROOT_DIR}/sdks/java/javadoc/build/docs/javadoc/ javadoc/${{ github.event.inputs.RELEASE }}
-            # Update current symlink to point to the latest release
-            unlink javadoc/current
-            ln -s ${{ github.event.inputs.RELEASE }} javadoc/current
+            # echo "..........Copying generated javadoc into beam-site.........."
+            # cp -r ${BEAM_ROOT_DIR}/sdks/java/javadoc/build/docs/javadoc/ javadoc/${{ github.event.inputs.RELEASE }}
+            # # Update current symlink to point to the latest release
+            # unlink javadoc/current
+            # ln -s ${{ github.event.inputs.RELEASE }} javadoc/current
 
-            echo "............Copying generated pydoc into beam-site.........."
-            cp -r ${BEAM_ROOT_DIR}/sdks/python/target/docs/_build pydoc/${{  github.event.inputs.RELEASE }}
-            # Update current symlink to point to the latest release
-            unlink pydoc/current
-            ln -s ${{ github.event.inputs.RELEASE }} pydoc/current
+            # echo "............Copying generated pydoc into beam-site.........."
+            # cp -r ${BEAM_ROOT_DIR}/sdks/python/target/docs/_build pydoc/${{  github.event.inputs.RELEASE }}
+            # # Update current symlink to point to the latest release
+            # unlink pydoc/current
+            # ln -s ${{ github.event.inputs.RELEASE }} pydoc/current
 
-            echo "............Copying generated typedoc into beam-site.........."
-            mkdir -p typedoc
-            cp -r ${BEAM_ROOT_DIR}/sdks/typescript/docs typedoc/${{ github.event.inputs.RELEASE }}
-            # Update current symlink to point to the latest release
-            unlink typedoc/current | true
-            ln -s ${{ github.event.inputs.RELEASE }} typedoc/current
+            # echo "............Copying generated typedoc into beam-site.........."
+            # mkdir -p typedoc
+            # cp -r ${BEAM_ROOT_DIR}/sdks/typescript/docs typedoc/${{ github.event.inputs.RELEASE }}
+            # # Update current symlink to point to the latest release
+            # unlink typedoc/current | true
+            # ln -s ${{ github.event.inputs.RELEASE }} typedoc/current
 
             echo "............Copying generated yamldoc into beam-site.........."
             mkdir -p yamldoc/${{ github.event.inputs.RELEASE }}

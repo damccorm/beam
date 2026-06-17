@@ -128,6 +128,21 @@ public class BeamSqlCliDatabaseTest {
   }
 
   @Test
+  public void testDropActiveDatabase_resetsToDefault() {
+    cli.execute("CREATE DATABASE my_database");
+    cli.execute("USE DATABASE my_database");
+    assertEquals("my_database", catalogManager.currentCatalog().currentDatabase());
+
+    cli.execute("DROP DATABASE my_database");
+    assertEquals("default", catalogManager.currentCatalog().currentDatabase());
+  }
+
+  @Test
+  public void testDropDatabase_null() {
+    assertFalse(catalogManager.currentCatalog().dropDatabase(null, false));
+  }
+
+  @Test
   public void testDropDatabase_nonexistent() {
     assertFalse(catalogManager.currentCatalog().databaseExists("my_database"));
     thrown.expect(CalciteContextException.class);

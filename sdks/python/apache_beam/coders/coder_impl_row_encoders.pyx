@@ -151,8 +151,7 @@ cdef class BoolRowColumnEncoder(AtomicTypeRowColumnEncoder):
 
   def __init__(self, unused_coder, column):
     super(BoolRowColumnEncoder, self).__init__(column)
-    self.contiguous = self.contiguous.astype(np.uint8)
-    cdef np.uint8_t[::1] view = self.contiguous
+    cdef np.uint8_t[::1] view = self.contiguous.view(np.uint8)
     self.data = &view[0]
 
   cdef bint encode_to_stream(self, size_t index, OutputStream stream) except -1:

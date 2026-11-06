@@ -172,6 +172,41 @@ def dumps(
   return base64.b64encode(c)
 
 
+def _pickle_absl_flags(obj):
+  return _create_absl_flags, tuple([])
+
+
+def _create_absl_flags():
+  return flags.FLAGS
+
+
+def _pickle_rlock(obj):
+  return RLOCK_TYPE, tuple([])
+
+
+def _lock_reducer(obj):
+  return threading.Lock, tuple([])
+
+
+_EXTRA_DISPATCH = {}
+try:
+  _EXTRA_DISPATCH[type(flags.FLAGS)] = _pickle_absl_flags
+except NameError:
+  pass
+if _TypeAliasType is not None:
+  _EXTRA_DISPATCH[_TypeAliasType] = _typealias_reduce
+try:
+  _EXTRA_DISPATCH[RLOCK_TYPE] = _pickle_rlock
+except NameError:
+  pass
+try:
+  _EXTRA_DISPATCH[LOCK_TYPE] = _lock_reducer
+except NameError:
+  pass
+if EnumDescriptor is not None:
+  _EXTRA_DISPATCH[EnumDescriptor] = _pickle_enum_descriptor
+
+
 def _dumps(
     o,
     enable_best_effort_determinism=False,
@@ -189,23 +224,7 @@ def _dumps(
       if enable_stable_code_identifier_pickling:
         config = STABLE_CODE_IDENTIFIER_CONFIG
       pickler = cloudpickle.CloudPickler(file, config=config)
-      try:
-        pickler.dispatch_table[type(flags.FLAGS)] = _pickle_absl_flags
-      except NameError:
-        pass
-      # Register Python 3.12 `type` alias reducer to unwrap to underlying value.
-      if _TypeAliasType is not None:
-        pickler.dispatch_table[_TypeAliasType] = _typealias_reduce
-      try:
-        pickler.dispatch_table[RLOCK_TYPE] = _pickle_rlock
-      except NameError:
-        pass
-      try:
-        pickler.dispatch_table[LOCK_TYPE] = _lock_reducer
-      except NameError:
-        pass
-      if EnumDescriptor is not None:
-        pickler.dispatch_table[EnumDescriptor] = _pickle_enum_descriptor
+      pickler.dispatch_table.update(_EXTRA_DISPATCH)
       pickler.dump(o)
       return file.getvalue()
 
@@ -233,22 +252,6 @@ def _loads(s):
 def roundtrip(o):
   """Internal utility for testing round-trip pickle serialization."""
   return _loads(_dumps(o))
-
-
-def _pickle_absl_flags(obj):
-  return _create_absl_flags, tuple([])
-
-
-def _create_absl_flags():
-  return flags.FLAGS
-
-
-def _pickle_rlock(obj):
-  return RLOCK_TYPE, tuple([])
-
-
-def _lock_reducer(obj):
-  return threading.Lock, tuple([])
 
 
 def dump_session(file_path):

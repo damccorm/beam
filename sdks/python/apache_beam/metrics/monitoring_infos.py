@@ -132,13 +132,18 @@ INSTANCE_ID_LABEL = (
 TABLE_ID_LABEL = common_urns.monitoring_info_labels.TABLE_ID.label_props.name
 
 
+_VARINT_CODER = coders.VarIntCoder()
+_VARINT_CODER_IMPL = _VARINT_CODER.get_impl()
+_STRING_SET_CODER_IMPL = coders.IterableCoder(coders.StrUtf8Coder()).get_impl()
+
+
 def extract_counter_value(monitoring_info_proto):
   """Returns the counter value of the monitoring info."""
   if not is_counter(monitoring_info_proto):
     raise ValueError('Unsupported type %s' % monitoring_info_proto.type)
 
   # Only SUM_INT64_TYPE is currently supported.
-  return coders.VarIntCoder().decode(monitoring_info_proto.payload)
+  return _VARINT_CODER_IMPL.decode(monitoring_info_proto.payload)
 
 
 def extract_gauge_value(monitoring_info_proto):
@@ -147,7 +152,7 @@ def extract_gauge_value(monitoring_info_proto):
     raise ValueError('Unsupported type %s' % monitoring_info_proto.type)
 
   # Only LATEST_INT64_TYPE is currently supported.
-  return _decode_gauge(coders.VarIntCoder(), monitoring_info_proto.payload)
+  return _decode_gauge(_VARINT_CODER, monitoring_info_proto.payload)
 
 
 def extract_distribution(monitoring_info_proto):
@@ -160,16 +165,14 @@ def extract_distribution(monitoring_info_proto):
     raise ValueError('Unsupported type %s' % monitoring_info_proto.type)
 
   # Only DISTRIBUTION_INT64_TYPE is currently supported.
-  return _decode_distribution(
-      coders.VarIntCoder(), monitoring_info_proto.payload)
+  return _decode_distribution(_VARINT_CODER, monitoring_info_proto.payload)
 
 
 def extract_string_set_value(monitoring_info_proto):
   if not is_string_set(monitoring_info_proto):
     raise ValueError('Unsupported type %s' % monitoring_info_proto.type)
 
-  coder = coders.IterableCoder(coders.StrUtf8Coder())
-  return set(coder.decode(monitoring_info_proto.payload))
+  return set(_STRING_SET_CODER_IMPL.decode(monitoring_info_proto.payload))
 
 
 def extract_bounded_trie_value(monitoring_info_proto):
@@ -218,7 +221,7 @@ def int64_user_counter(
   """
   labels = create_labels(ptransform=ptransform, namespace=namespace, name=name)
   if isinstance(metric, int):
-    metric = coders.VarIntCoder().encode(metric)
+    metric = _VARINT_CODER_IMPL.encode(metric)
   return create_monitoring_info(
       USER_COUNTER_URN, SUM_INT64_TYPE, metric, labels)
 
@@ -240,7 +243,7 @@ def int64_counter(
   labels = labels or {}
   labels.update(create_labels(ptransform=ptransform, pcollection=pcollection))
   if isinstance(metric, int):
-    metric = coders.VarIntCoder().encode(metric)
+    metric = _VARINT_CODER_IMPL.encode(metric)
   return create_monitoring_info(urn, SUM_INT64_TYPE, metric, labels)
 
 
@@ -255,7 +258,7 @@ def int64_user_distribution(
   """
   labels = create_labels(ptransform=ptransform, namespace=namespace, name=name)
   payload = _encode_distribution(
-      coders.VarIntCoder(), metric.count, metric.sum, metric.min, metric.max)
+      _VARINT_CODER, metric.count, metric.sum, metric.min, metric.max)
   return create_monitoring_info(
       USER_DISTRIBUTION_URN, DISTRIBUTION_INT64_TYPE, payload, labels)
 
@@ -275,7 +278,7 @@ def int64_distribution(
   """
   labels = create_labels(ptransform=ptransform, pcollection=pcollection)
   payload = _encode_distribution(
-      coders.VarIntCoder(), metric.count, metric.sum, metric.min, metric.max)
+      _VARINT_CODER, metric.count, metric.sum, metric.min, metric.max)
   return create_monitoring_info(urn, DISTRIBUTION_INT64_TYPE, payload, labels)
 
 
@@ -291,14 +294,13 @@ def int64_user_gauge(
   """
   labels = create_labels(ptransform=ptransform, namespace=namespace, name=name)
   if isinstance(metric, GaugeData):
-    coder = coders.VarIntCoder()
     value = metric.value
     timestamp = metric.timestamp
   else:
     raise TypeError(
         'Expected GaugeData metric type but received %s with value %s' %
         (type(metric), metric))
-  payload = _encode_gauge(coder, timestamp, value)
+  payload = _encode_gauge(_VARINT_CODER, timestamp, value)
   return create_monitoring_info(
       USER_GAUGE_URN, LATEST_INT64_TYPE, payload, labels)
 
@@ -320,8 +322,8 @@ def int64_gauge(urn, metric, ptransform=None) -> metrics_pb2.MonitoringInfo:
     raise TypeError(
         'Expected int metric type but received %s with value %s' %
         (type(metric), metric))
-  coder = coders.VarIntCoder()
-  payload = coder.encode(time_ms) + coder.encode(value)
+  payload = _VARINT_CODER_IMPL.encode(time_ms) + _VARINT_CODER_IMPL.encode(
+      value)
   return create_monitoring_info(urn, LATEST_INT64_TYPE, payload, labels)
 
 
@@ -340,7 +342,7 @@ def user_set_string(namespace, name, metric, ptransform=None):
   if isinstance(metric, set):
     metric = list(metric)
   if isinstance(metric, list):
-    metric = coders.IterableCoder(coders.StrUtf8Coder()).encode(metric)
+    metric = _STRING_SET_CODER_IMPL.encode(metric)
   return create_monitoring_info(
       USER_STRING_SET_URN, STRING_SET_TYPE, metric, labels)
 

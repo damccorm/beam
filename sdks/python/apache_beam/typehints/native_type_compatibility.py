@@ -377,6 +377,11 @@ class TypedWindowedValue(Generic[T]):
     raise NotImplementedError("This class is solely for type inference")
 
 
+_PRIMITIVE_PASS_THROUGH = frozenset(
+    (int, float, str, bytes, bool, object, complex, type(None), None))
+_CACHED_TYPE_MAP = None
+
+
 def convert_to_beam_type(typ):
   """Convert a given typing type to a Beam type.
 
@@ -391,6 +396,12 @@ def convert_to_beam_type(typ):
   Raises:
     ValueError: The type was malformed.
   """
+  if (typ.__class__ is type or typ is None) and typ in _PRIMITIVE_PASS_THROUGH:
+    return typ
+  if isinstance(typ, typehints.TypeConstraint):
+    return typ
+  if typ is typing.Any:
+    return typehints.Any
   # Convert `int | float` to typing.Union[int, float]
   # pipe operator as Union and types.UnionType are introduced
   # in Python 3.10.
@@ -451,7 +462,9 @@ def convert_to_beam_type(typ):
     # Support more collections types
     return typ
 
-  type_map = [
+  global _CACHED_TYPE_MAP
+  if _CACHED_TYPE_MAP is None:
+    _CACHED_TYPE_MAP = [
       # TODO(https://github.com/apache/beam/issues/20076): Currently
       # unsupported.
       _TypeMapEntry(match=is_new_type, arity=0, beam_type=typehints.Any),
@@ -507,7 +520,8 @@ def convert_to_beam_type(typ):
   ]
 
   # Find the first matching entry.
-  matched_entry = next((entry for entry in type_map if entry.match(typ)), None)
+  matched_entry = next(
+      (entry for entry in _CACHED_TYPE_MAP if entry.match(typ)), None)
   if not matched_entry:
     # Please add missing type support if you see this message.
     _LOGGER.info('Using Any for unsupported type: %s', typ)

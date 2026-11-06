@@ -65,6 +65,7 @@ from apache_beam.utils.timestamp import Timestamp
 from apache_beam.utils.windowed_value import HomogeneousWindowedBatch
 from apache_beam.utils.windowed_value import WindowedBatch
 from apache_beam.utils.windowed_value import WindowedValue
+from apache_beam.utils.windowed_value import create as windowed_value_create
 
 if TYPE_CHECKING:
   from apache_beam.io.iobase import RestrictionProgress
@@ -824,7 +825,8 @@ class PerWindowInvoker(DoFnInvoker):
     # and has_cached_window_batch_args will be set to true if the corresponding
     # self.args_for_process,have been updated and should be reused directly.
     self.recalculate_window_args = (
-        self.has_windowed_inputs or 'disable_global_windowed_args_caching'
+        not all(si.is_globally_windowed() for si in side_inputs) or
+        'disable_global_windowed_args_caching'
         in RuntimeValueProvider.experiments)
     self.has_cached_window_args = False
     self.has_cached_window_batch_args = False
@@ -855,18 +857,17 @@ class PerWindowInvoker(DoFnInvoker):
       additional_args=None,
       additional_kwargs=None):
     # type: (...) -> Iterable[SplitResultResidual]
-    if not additional_args:
-      additional_args = []
-    if not additional_kwargs:
-      additional_kwargs = {}
-
     self.context.set_element(windowed_value)
     # Call for the process function for each window if has windowed side inputs
     # or if the process accesses the window parameter. We can just call it once
     # otherwise as none of the arguments are changing
 
-    residuals = []
     if self.is_splittable:
+      if not additional_args:
+        additional_args = []
+      if not additional_kwargs:
+        additional_kwargs = {}
+      residuals = []
       if restriction is None:
         # This may be a SDF invoked as an ordinary DoFn on runners that don't
         # understand SDF.  See, e.g. BEAM-11472.
@@ -886,8 +887,11 @@ class PerWindowInvoker(DoFnInvoker):
                 windowed_value, additional_kwargs, i):
               break
             residual = self._invoke_process_per_window(
-                WindowedValue(
-                    windowed_value.value, windowed_value.timestamp, (w, )),
+                windowed_value_create(
+                    windowed_value.value,
+                    windowed_value.timestamp_micros,
+                    (w, ),
+                    windowed_value.pane_info),
                 additional_args,
                 additional_kwargs)
             if residual:
@@ -907,17 +911,21 @@ class PerWindowInvoker(DoFnInvoker):
           self.current_window_index = None
           self.threadsafe_restriction_tracker = None
           self.threadsafe_watermark_estimator = None
+      return residuals
     elif self.has_windowed_inputs and len(windowed_value.windows) != 1:
       for w in windowed_value.windows:
         self._invoke_process_per_window(
-            WindowedValue(
-                windowed_value.value, windowed_value.timestamp, (w, )),
+            windowed_value_create(
+                windowed_value.value,
+                windowed_value.timestamp_micros,
+                (w, ),
+                windowed_value.pane_info),
             additional_args,
             additional_kwargs)
     else:
       self._invoke_process_per_window(
           windowed_value, additional_args, additional_kwargs)
-    return residuals
+    return ()
 
   def invoke_process_batch(
       self,
@@ -990,20 +998,20 @@ class PerWindowInvoker(DoFnInvoker):
       additional_kwargs,
   ):
     # type: (...) -> Optional[SplitResultResidual]
-    if self.has_cached_window_args:
+    if self.has_windowed_inputs:
+      window = windowed_value.windows[0]
+    else:
+      window = GlobalWindow()
+    if self.has_cached_window_args and not additional_args:
       args_for_process, kwargs_for_process = (
           self.args_for_process, self.kwargs_for_process)
     else:
-      if self.has_windowed_inputs:
-        assert len(windowed_value.windows) <= 1
-        window, = windowed_value.windows
-      else:
-        window = GlobalWindow()
       side_inputs = [si[window] for si in self.side_inputs]
-      side_inputs.extend(additional_args)
+      if additional_args:
+        side_inputs.extend(additional_args)
       args_for_process, kwargs_for_process = util.insert_values_in_args(
           self.args_for_process, self.kwargs_for_process, side_inputs)
-      if not self.recalculate_window_args:
+      if not self.recalculate_window_args and not additional_args:
         self.args_for_process, self.kwargs_for_process = (
             args_for_process, kwargs_for_process)
         self.has_cached_window_args = True
@@ -1021,17 +1029,17 @@ class PerWindowInvoker(DoFnInvoker):
             'instead, got \'%s\'.') % (windowed_value.value, ))
 
     for i, p in self.placeholders_for_process:
-      if core.DoFn.ElementParam == p:
+      if p is core.DoFn.ElementParam or core.DoFn.ElementParam == p:
         args_for_process[i] = windowed_value.value
-      elif core.DoFn.KeyParam == p:
+      elif p is core.DoFn.KeyParam or core.DoFn.KeyParam == p:
         args_for_process[i] = key
-      elif core.DoFn.WindowParam == p:
+      elif p is core.DoFn.WindowParam or core.DoFn.WindowParam == p:
         args_for_process[i] = window
-      elif core.DoFn.WindowedValueParam == p:
+      elif p is core.DoFn.WindowedValueParam or core.DoFn.WindowedValueParam == p:
         args_for_process[i] = windowed_value
-      elif core.DoFn.TimestampParam == p:
+      elif p is core.DoFn.TimestampParam or core.DoFn.TimestampParam == p:
         args_for_process[i] = windowed_value.timestamp
-      elif core.DoFn.PaneInfoParam == p:
+      elif p is core.DoFn.PaneInfoParam or core.DoFn.PaneInfoParam == p:
         args_for_process[i] = windowed_value.pane_info
       elif isinstance(p, core.DoFn.StateParam):
         assert self.user_state_context is not None
@@ -1046,22 +1054,27 @@ class PerWindowInvoker(DoFnInvoker):
                 window,
                 windowed_value.timestamp,
                 windowed_value.pane_info))
-      elif core.DoFn.BundleFinalizerParam == p:
+      elif p is core.DoFn.BundleFinalizerParam or core.DoFn.BundleFinalizerParam == p:
         args_for_process[i] = self.bundle_finalizer_param
       elif isinstance(p, core.DoFn.BundleContextParam):
         args_for_process[i] = self._bundle_context_values[p][1]
       elif isinstance(p, core.DoFn.SetupContextParam):
         args_for_process[i] = self._setup_context_values[p][1]
 
-    kwargs_for_process = kwargs_for_process or {}
-
     if additional_kwargs:
-      kwargs_for_process.update(additional_kwargs)
+      if kwargs_for_process:
+        kwargs_for_process = kwargs_for_process.copy()
+        kwargs_for_process.update(additional_kwargs)
+      else:
+        kwargs_for_process = additional_kwargs
+
+    if kwargs_for_process:
+      results = self.process_method(*args_for_process, **kwargs_for_process)
+    else:
+      results = self.process_method(*args_for_process)
 
     self.output_handler.handle_process_outputs(
-        windowed_value,
-        self.process_method(*args_for_process, **kwargs_for_process),
-        self.threadsafe_watermark_estimator)
+        windowed_value, results, self.threadsafe_watermark_estimator)
 
     if self.is_splittable:
       assert self.threadsafe_restriction_tracker is not None
@@ -1711,14 +1724,22 @@ class _OutputHandler(OutputHandler):
             (object_type, results))
 
     if results is None:
-      results = []
+      if self.per_element_output_counter is not None:
+        self.per_element_output_counter.add_input(0)
+      return
 
     # TODO(https://github.com/apache/beam/issues/20404): Verify that the
     #  results object is a valid iterable type if
     #  performance_runtime_type_check is active, without harming performance
     output_element_count = 0
     for result in results:
-      tag, result = self._handle_tagged_output(result)
+      if isinstance(result, TaggedOutput):
+        tag = result.tag
+        if not isinstance(tag, str):
+          raise TypeError('In %s, tag %s is not a string' % (self, tag))
+        result = result.value
+      else:
+        tag = None
 
       if not self._process_yields_batches:
         # process yields elements
@@ -1765,11 +1786,22 @@ class _OutputHandler(OutputHandler):
     then dispatched to the appropriate indexed output.
     """
     if results is None:
-      results = []
+      if self.per_element_output_counter is not None:
+        self.per_element_output_counter.add_input(0)
+      return
 
     output_element_count = 0
+    empty_windowed_value = (
+        windowed_input_batch.as_empty_windowed_value()
+        if self._process_batch_yields_elements else None)
     for result in results:
-      tag, result = self._handle_tagged_output(result)
+      if isinstance(result, TaggedOutput):
+        tag = result.tag
+        if not isinstance(tag, str):
+          raise TypeError('In %s, tag %s is not a string' % (self, tag))
+        result = result.value
+      else:
+        tag = None
 
       if not self._process_batch_yields_elements:
         # process_batch yields batches
@@ -1795,7 +1827,7 @@ class _OutputHandler(OutputHandler):
         assert isinstance(windowed_input_batch, HomogeneousWindowedBatch)
 
         windowed_value = self._maybe_propagate_windowing_info(
-            windowed_input_batch.as_empty_windowed_value(), result)
+            empty_windowed_value, result)
 
         output_element_count += 1
 

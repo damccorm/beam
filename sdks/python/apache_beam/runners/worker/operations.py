@@ -62,6 +62,7 @@ from apache_beam.transforms.window import GlobalWindows
 from apache_beam.typehints.batch import BatchConverter
 from apache_beam.utils.windowed_value import WindowedBatch
 from apache_beam.utils.windowed_value import WindowedValue
+from apache_beam.utils.windowed_value import create as windowed_value_create
 
 if TYPE_CHECKING:
   from apache_beam.runners.sdf_utils import SplitResultPrimary
@@ -628,22 +629,22 @@ class Operation(object):
 
   def execution_time_monitoring_infos(self, transform_id):
     # type: (str) -> Dict[FrozenSet, metrics_pb2.MonitoringInfo]
-    total_time_spent_msecs = (
-        self.scoped_start_state.sampled_msecs_int() +
-        self.scoped_process_state.sampled_msecs_int() +
-        self.scoped_finish_state.sampled_msecs_int())
+    start_msecs = self.scoped_start_state.sampled_msecs_int()
+    process_msecs = self.scoped_process_state.sampled_msecs_int()
+    finish_msecs = self.scoped_finish_state.sampled_msecs_int()
+    total_time_spent_msecs = start_msecs + process_msecs + finish_msecs
     mis = [
         monitoring_infos.int64_counter(
             monitoring_infos.START_BUNDLE_MSECS_URN,
-            self.scoped_start_state.sampled_msecs_int(),
+            start_msecs,
             ptransform=transform_id),
         monitoring_infos.int64_counter(
             monitoring_infos.PROCESS_BUNDLE_MSECS_URN,
-            self.scoped_process_state.sampled_msecs_int(),
+            process_msecs,
             ptransform=transform_id),
         monitoring_infos.int64_counter(
             monitoring_infos.FINISH_BUNDLE_MSECS_URN,
-            self.scoped_finish_state.sampled_msecs_int(),
+            finish_msecs,
             ptransform=transform_id),
         monitoring_infos.int64_counter(
             monitoring_infos.TOTAL_MSECS_URN,
@@ -815,8 +816,8 @@ class DoOperation(Operation):
         'process-timers',
         metrics_container=self.metrics_container)
     # See fn_data in dataflow_runner.py
-    # TODO: Store all the items from spec?
-    self.fn, _, _, _, _ = (pickler.loads(self.spec.serialized_fn))
+    self._fn_data = pickler.loads(self.spec.serialized_fn)
+    self.fn = self._fn_data[0]
 
   def _read_side_inputs(self, tags_and_types):
     # type: (...) -> Iterator[apache_sideinputs.SideInputMap]
@@ -880,8 +881,7 @@ class DoOperation(Operation):
       super(DoOperation, self).setup(data_sampler)
 
       # See fn_data in dataflow_runner.py
-      fn, args, kwargs, tags_and_types, window_fn = (
-          pickler.loads(self.spec.serialized_fn))
+      fn, args, kwargs, tags_and_types, window_fn = self._fn_data
 
       state = common.DoFnState(self.counter_factory)
       state.step_name = self.name_context.logging_name()
@@ -1037,9 +1037,8 @@ class DoOperation(Operation):
     return infos
 
   def _get_runtime_performance_hints(self):
-    fns = pickler.loads(self.spec.serialized_fn)
-    if fns and hasattr(fns[0], '_runtime_output_constraints'):
-      return fns[0]._runtime_output_constraints
+    if self.fn is not None and hasattr(self.fn, '_runtime_output_constraints'):
+      return self.fn._runtime_output_constraints
 
     return {}
 
@@ -1222,16 +1221,21 @@ class PGBKOperation(Operation):
   def flush(self, target):
     # type: (int) -> None
     limit = self.size - target
-    for ix, (kw, vs) in enumerate(list(self.table.items())):
+    if limit <= 0:
+      return
+    keys_to_delete = []
+    for ix, (kw, vs) in enumerate(self.table.items()):
       if ix >= limit:
         break
-      del self.table[kw]
+      keys_to_delete.append(kw)
       key, windows = kw
       output_value = [v.value[1] for v in vs]
-      windowed_value = WindowedValue((key, output_value),
-                                     vs[0].timestamp,
-                                     windows)
+      windowed_value = windowed_value_create(
+          (key, output_value), vs[0].timestamp_micros, windows, vs[0].pane_info)
       self.output(windowed_value)
+    for kw in keys_to_delete:
+      del self.table[kw]
+    self.size -= len(keys_to_delete)
 
 
 class PGBKCVOperation(Operation):
@@ -1293,10 +1297,9 @@ a combine function applied.
       if self.is_default_windowing:
         self.add_key_value(key, value, None)
       else:
+        timestamp = wkv.timestamp if self.timestamp_combiner else None
         for window in wkv.windows:
-          self.add_key_value((window, key),
-                             value,
-                             wkv.timestamp if self.timestamp_combiner else None)
+          self.add_key_value((window, key), value, timestamp)
 
   def add_key_value(self, wkey, value, timestamp):
     entry = self.table.get(wkey, None)

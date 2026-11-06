@@ -189,23 +189,7 @@ def _dumps(
       if enable_stable_code_identifier_pickling:
         config = STABLE_CODE_IDENTIFIER_CONFIG
       pickler = cloudpickle.CloudPickler(file, config=config)
-      try:
-        pickler.dispatch_table[type(flags.FLAGS)] = _pickle_absl_flags
-      except NameError:
-        pass
-      # Register Python 3.12 `type` alias reducer to unwrap to underlying value.
-      if _TypeAliasType is not None:
-        pickler.dispatch_table[_TypeAliasType] = _typealias_reduce
-      try:
-        pickler.dispatch_table[RLOCK_TYPE] = _pickle_rlock
-      except NameError:
-        pass
-      try:
-        pickler.dispatch_table[LOCK_TYPE] = _lock_reducer
-      except NameError:
-        pass
-      if EnumDescriptor is not None:
-        pickler.dispatch_table[EnumDescriptor] = _pickle_enum_descriptor
+      pickler.dispatch_table.update(_EXTRA_DISPATCH)
       pickler.dump(o)
       return file.getvalue()
 
@@ -249,6 +233,19 @@ def _pickle_rlock(obj):
 
 def _lock_reducer(obj):
   return threading.Lock, tuple([])
+
+
+_EXTRA_DISPATCH = {}
+try:
+  _EXTRA_DISPATCH[type(flags.FLAGS)] = _pickle_absl_flags
+except NameError:
+  pass
+if _TypeAliasType is not None:
+  _EXTRA_DISPATCH[_TypeAliasType] = _typealias_reduce
+for _k, _v in ((RLOCK_TYPE, _pickle_rlock), (LOCK_TYPE, _lock_reducer)):
+  _EXTRA_DISPATCH[_k] = _v
+if EnumDescriptor is not None:
+  _EXTRA_DISPATCH[EnumDescriptor] = _pickle_enum_descriptor
 
 
 def dump_session(file_path):

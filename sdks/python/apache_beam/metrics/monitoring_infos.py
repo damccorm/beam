@@ -132,13 +132,18 @@ INSTANCE_ID_LABEL = (
 TABLE_ID_LABEL = common_urns.monitoring_info_labels.TABLE_ID.label_props.name
 
 
+_VARINT_CODER = coders.VarIntCoder()
+_VARINT_CODER_IMPL = _VARINT_CODER.get_impl()
+_STRING_SET_CODER_IMPL = coders.IterableCoder(coders.StrUtf8Coder()).get_impl()
+
+
 def extract_counter_value(monitoring_info_proto):
   """Returns the counter value of the monitoring info."""
   if not is_counter(monitoring_info_proto):
     raise ValueError('Unsupported type %s' % monitoring_info_proto.type)
 
   # Only SUM_INT64_TYPE is currently supported.
-  return coders.VarIntCoder().decode(monitoring_info_proto.payload)
+  return _VARINT_CODER_IMPL.decode(monitoring_info_proto.payload)
 
 
 def extract_gauge_value(monitoring_info_proto):
@@ -492,16 +497,18 @@ def to_key(
 
 
 def sum_payload_combiner(payload_a, payload_b):
-  coder = coders.VarIntCoder()
-  return coder.encode(coder.decode(payload_a) + coder.decode(payload_b))
+  return _VARINT_CODER_IMPL.encode(
+      _VARINT_CODER_IMPL.decode(payload_a) +
+      _VARINT_CODER_IMPL.decode(payload_b))
 
 
 def distribution_payload_combiner(payload_a, payload_b):
-  coder = coders.VarIntCoder()
-  (count_a, sum_a, min_a, max_a) = _decode_distribution(coder, payload_a)
-  (count_b, sum_b, min_b, max_b) = _decode_distribution(coder, payload_b)
+  (count_a, sum_a, min_a,
+   max_a) = _decode_distribution(_VARINT_CODER, payload_a)
+  (count_b, sum_b, min_b,
+   max_b) = _decode_distribution(_VARINT_CODER, payload_b)
   return _encode_distribution(
-      coder,
+      _VARINT_CODER,
       count_a + count_b,
       sum_a + sum_b,
       min(min_a, min_b),
@@ -542,37 +549,33 @@ def consolidate(metrics, key=to_key):
 
 def _decode_gauge(coder, payload):
   """Returns a tuple of (timestamp, value)."""
-  timestamp_coder = coders.VarIntCoder().get_impl()
   stream = coder_impl.create_InputStream(payload)
-  time_ms = timestamp_coder.decode_from_stream(stream, True)
+  time_ms = _VARINT_CODER_IMPL.decode_from_stream(stream, True)
   return (time_ms / 1000.0, coder.get_impl().decode_from_stream(stream, True))
 
 
 def _encode_gauge(coder, timestamp, value):
-  timestamp_coder = coders.VarIntCoder().get_impl()
   stream = coder_impl.create_OutputStream()
-  timestamp_coder.encode_to_stream(int(timestamp * 1000), stream, True)
+  _VARINT_CODER_IMPL.encode_to_stream(int(timestamp * 1000), stream, True)
   coder.get_impl().encode_to_stream(value, stream, True)
   return stream.get()
 
 
 def _decode_distribution(value_coder, payload):
   """Returns a tuple of (count, sum, min, max)."""
-  count_coder = coders.VarIntCoder().get_impl()
   value_coder = value_coder.get_impl()
   stream = coder_impl.create_InputStream(payload)
   return (
-      count_coder.decode_from_stream(stream, True),
+      _VARINT_CODER_IMPL.decode_from_stream(stream, True),
       value_coder.decode_from_stream(stream, True),
       value_coder.decode_from_stream(stream, True),
       value_coder.decode_from_stream(stream, True))
 
 
 def _encode_distribution(value_coder, count, sum, min, max):
-  count_coder = coders.VarIntCoder().get_impl()
   value_coder = value_coder.get_impl()
   stream = coder_impl.create_OutputStream()
-  count_coder.encode_to_stream(count, stream, True)
+  _VARINT_CODER_IMPL.encode_to_stream(count, stream, True)
   value_coder.encode_to_stream(sum, stream, True)
   value_coder.encode_to_stream(min, stream, True)
   value_coder.encode_to_stream(max, stream, True)

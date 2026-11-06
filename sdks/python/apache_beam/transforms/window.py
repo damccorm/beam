@@ -255,17 +255,34 @@ class IntervalWindow(windowed_value._IntervalWindowBase, BoundedWindow):
     start: Start of window as seconds since Unix epoch.
     end: End of window as seconds since Unix epoch.
   """
+  @classmethod
+  def from_micros(
+      cls, start_micros: int, end_micros: int) -> 'IntervalWindow':
+    w = cls(None, None)
+    w._start_micros = start_micros
+    w._end_micros = end_micros
+    return w
+
   def __lt__(self, other):
+    if isinstance(other, IntervalWindow):
+      if self._end_micros != other._end_micros:
+        return self._end_micros < other._end_micros
+      return hash(self) < hash(other)
     if self.end != other.end:
       return self.end < other.end
     return hash(self) < hash(other)
 
   def intersects(self, other: 'IntervalWindow') -> bool:
-    return other.start < self.end or self.start < other.end
+    return (
+        other._start_micros < self._end_micros or
+        self._start_micros < other._end_micros)
 
   def union(self, other: 'IntervalWindow') -> 'IntervalWindow':
-    return IntervalWindow(
-        min(self.start, other.start), max(self.end, other.end))
+    return IntervalWindow.from_micros(
+        self._start_micros if self._start_micros < other._start_micros else
+        other._start_micros,
+        self._end_micros
+        if self._end_micros > other._end_micros else other._end_micros)
 
 
 V = TypeVar("V")
@@ -421,11 +438,20 @@ class FixedWindows(NonMergingWindowFn):
       raise ValueError('The size parameter must be strictly positive.')
     self.size = Duration.of(size)
     self.offset = Timestamp.of(offset) % self.size
+    self._size_micros = self.size.micros
+    self._offset_micros = self.offset.micros
 
   def assign(self, context: WindowFn.AssignContext) -> list[IntervalWindow]:
     timestamp = context.timestamp
-    start = timestamp - (timestamp - self.offset) % self.size
-    return [IntervalWindow(start, start + self.size)]
+    ts_micros = (
+        timestamp.micros
+        if isinstance(timestamp, Timestamp) else Timestamp.of(timestamp).micros)
+    start_micros = (
+        ts_micros - (ts_micros - self._offset_micros) % self._size_micros)
+    return [
+        IntervalWindow.from_micros(
+            start_micros, start_micros + self._size_micros)
+    ]
 
   def get_window_coder(self) -> coders.IntervalWindowCoder:
     return coders.IntervalWindowCoder()
@@ -481,17 +507,22 @@ class SlidingWindows(NonMergingWindowFn):
     self.size = Duration.of(size)
     self.period = Duration.of(period)
     self.offset = Timestamp.of(offset) % period
+    self._size_micros = self.size.micros
+    self._period_micros = self.period.micros
+    self._offset_micros = self.offset.micros
 
   def assign(self, context: WindowFn.AssignContext) -> list[IntervalWindow]:
     timestamp = context.timestamp
-    start = timestamp - ((timestamp - self.offset) % self.period)
+    ts_micros = (
+        timestamp.micros
+        if isinstance(timestamp, Timestamp) else Timestamp.of(timestamp).micros)
+    start_micros = (
+        ts_micros - ((ts_micros - self._offset_micros) % self._period_micros))
+    size_micros = self._size_micros
     return [
-        IntervalWindow(
-            (interval_start := Timestamp(micros=s)),
-            interval_start + self.size,
-        ) for s in range(
-            start.micros, timestamp.micros -
-            self.size.micros, -self.period.micros)
+        IntervalWindow.from_micros(s, s + size_micros)
+        for s in range(
+            start_micros, ts_micros - size_micros, -self._period_micros)
     ]
 
   def get_window_coder(self) -> coders.IntervalWindowCoder:
@@ -542,10 +573,14 @@ class Sessions(WindowFn):
     if gap_size <= 0:
       raise ValueError('The size parameter must be strictly positive.')
     self.gap_size = Duration.of(gap_size)
+    self._gap_micros = self.gap_size.micros
 
   def assign(self, context: WindowFn.AssignContext) -> list[IntervalWindow]:
     timestamp = context.timestamp
-    return [IntervalWindow(timestamp, timestamp + self.gap_size)]
+    ts_micros = (
+        timestamp.micros
+        if isinstance(timestamp, Timestamp) else Timestamp.of(timestamp).micros)
+    return [IntervalWindow.from_micros(ts_micros, ts_micros + self._gap_micros)]
 
   def get_window_coder(self) -> coders.IntervalWindowCoder:
     return coders.IntervalWindowCoder()

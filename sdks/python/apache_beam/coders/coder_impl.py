@@ -37,6 +37,7 @@ import enum
 import itertools
 import json
 import logging
+import operator
 import pickle
 from io import BytesIO
 from typing import TYPE_CHECKING
@@ -123,6 +124,8 @@ _LOGGER = logging.getLogger(__name__)
 _TIME_SHIFT = 1 << 63
 MIN_TIMESTAMP_micros = MIN_TIMESTAMP.micros
 MAX_TIMESTAMP_micros = MAX_TIMESTAMP.micros
+MIN_TIMESTAMP_millis = -(abs(MIN_TIMESTAMP_micros) // 1000)
+MAX_TIMESTAMP_millis = MAX_TIMESTAMP_micros // 1000
 
 IterableStateReader = Callable[[bytes, 'CoderImpl'], Iterable]
 IterableStateWriter = Callable[[Iterable, 'CoderImpl'], bytes]
@@ -416,8 +419,10 @@ class FastPrimitivesCoderImpl(StreamCoderImpl):
         # when value does not fit into int64.
         int_value = value
         # If Cython is not used, we must do a (slower) check ourselves.
-        if not TYPE_CHECKING and not is_compiled:
-          if not fits_in_64_bits(value):
+        # Put `not is_compiled` first so Cython short-circuits at C level
+        # without looking up TYPE_CHECKING in module globals.
+        if not is_compiled and not TYPE_CHECKING:
+          if not (-0x8000000000000000 <= value <= 0x7fffffffffffffff):
             raise OverflowError()
         stream.write_byte(INT_TYPE)
         stream.write_var_int64(int_value)
@@ -434,17 +439,18 @@ class FastPrimitivesCoderImpl(StreamCoderImpl):
       unicode_value = value  # for typing
       stream.write_byte(UNICODE_TYPE)
       stream.write(unicode_value.encode('utf-8'), nested)
-    elif t is list or t is tuple:
-      stream.write_byte(LIST_TYPE if t is list else TUPLE_TYPE)
-      stream.write_var_int64(len(value))
-      for e in value:
+    elif t is list:
+      list_value = value  # for typing
+      stream.write_byte(LIST_TYPE)
+      stream.write_var_int64(len(list_value))
+      for e in list_value:
         self.encode_to_stream(e, stream, True)
-    elif t is bool:
-      stream.write_byte(BOOL_TYPE)
-      stream.write_byte(value)
-    elif t in _ITERABLE_LIKE_TYPES:
-      stream.write_byte(ITERABLE_LIKE_TYPE)
-      self.iterable_coder_impl.encode_to_stream(value, stream, nested)
+    elif t is tuple:
+      tuple_value = value  # for typing
+      stream.write_byte(TUPLE_TYPE)
+      stream.write_var_int64(len(tuple_value))
+      for e in tuple_value:
+        self.encode_to_stream(e, stream, True)
     elif t is dict:
       dict_value = value  # for typing
       stream.write_byte(DICT_TYPE)
@@ -476,6 +482,12 @@ class FastPrimitivesCoderImpl(StreamCoderImpl):
               self.requires_deterministic_step_label) from exn
       for e in value:
         self.encode_to_stream(e, stream, True)
+    elif t is bool:
+      stream.write_byte(BOOL_TYPE)
+      stream.write_byte(value)
+    elif t in _ITERABLE_LIKE_TYPES:
+      stream.write_byte(ITERABLE_LIKE_TYPE)
+      self.iterable_coder_impl.encode_to_stream(value, stream, nested)
     # All possibly deterministic encodings should be above this clause,
     # all non-deterministic ones below.
     elif self.requires_deterministic_step_label is not None:
@@ -694,7 +706,8 @@ class BytesCoderImpl(CoderImpl):
 
     # value might be of type np.bytes if passed from encode_batch, and cython
     # does not recognize it as bytes.
-    if is_compiled and isinstance(value, np.bytes_):
+    if type(value) is not bytes and is_compiled and isinstance(value,
+                                                               np.bytes_):
       value = bytes(value)
 
     out.write(value, nested)
@@ -709,6 +722,31 @@ class BytesCoderImpl(CoderImpl):
 
   def decode(self, encoded):
     return encoded
+
+  def estimate_size(self, value, nested=False):
+    return self._get_nested_size(len(value), nested)
+
+
+class StrUtf8CoderImpl(CoderImpl):
+  """For internal use only; no backwards-compatibility guarantees.
+
+  A coder for str objects encoded as UTF-8."""
+  def encode_to_stream(self, value, out, nested):
+    # type: (str, create_OutputStream, bool) -> None
+    out.write(value.encode('utf-8'), nested)
+
+  def decode_from_stream(self, in_stream, nested):
+    # type: (create_InputStream, bool) -> str
+    return in_stream.read_all(nested).decode('utf-8')
+
+  def encode(self, value):
+    return value.encode('utf-8')
+
+  def decode(self, encoded):
+    return encoded.decode('utf-8')
+
+  def estimate_size(self, value, nested=False):
+    return self._get_nested_size(len(value.encode('utf-8')), nested)
 
 
 class BooleanCoderImpl(CoderImpl):
@@ -1148,6 +1186,14 @@ class AbstractComponentCoderImpl(StreamCoderImpl):
     for c in coder_impls:
       assert isinstance(c, CoderImpl), c
     self._coder_impls = tuple(coder_impls)
+    self._num_coders = len(self._coder_impls)
+    self._is_kv = self._num_coders == 2
+    if self._is_kv:
+      self._coder_0 = self._coder_impls[0]
+      self._coder_1 = self._coder_impls[1]
+    else:
+      self._coder_0 = None
+      self._coder_1 = None
 
   def _extract_components(self, value):
     raise NotImplementedError
@@ -1158,19 +1204,27 @@ class AbstractComponentCoderImpl(StreamCoderImpl):
   def encode_to_stream(self, value, out, nested):
     # type: (Any, create_OutputStream, bool) -> None
     values = self._extract_components(value)
-    if len(self._coder_impls) != len(values):
+    if self._num_coders != len(values):
       raise ValueError('Number of components does not match number of coders.')
-    for i in range(0, len(self._coder_impls)):
+    if self._is_kv:
+      self._coder_0.encode_to_stream(values[0], out, True)
+      self._coder_1.encode_to_stream(values[1], out, nested)
+      return
+    last = self._num_coders - 1
+    for i in range(0, self._num_coders):
       c = self._coder_impls[i]  # type cast
-      c.encode_to_stream(
-          values[i], out, nested or i + 1 < len(self._coder_impls))
+      c.encode_to_stream(values[i], out, nested or i < last)
 
   def decode_from_stream(self, in_stream, nested):
     # type: (create_InputStream, bool) -> Any
+    if self._is_kv:
+      return self._construct_from_components((
+          self._coder_0.decode_from_stream(in_stream, True),
+          self._coder_1.decode_from_stream(in_stream, nested)))
+    last = self._num_coders - 1
     return self._construct_from_components([
-        c.decode_from_stream(
-            in_stream, nested or i + 1 < len(self._coder_impls))
-        for i, c in enumerate(self._coder_impls)
+        self._coder_impls[i].decode_from_stream(in_stream, nested or i < last)
+        for i in range(0, self._num_coders)
     ])
 
   def estimate_size(self, value, nested=False):
@@ -1178,7 +1232,8 @@ class AbstractComponentCoderImpl(StreamCoderImpl):
 
     """Estimates the encoded size of the given value, in bytes."""
     # TODO(ccy): This ignores sizes of observable components.
-    estimated_size, _ = (self.get_estimated_size_and_observables(value))
+    estimated_size, _ = (
+        self.get_estimated_size_and_observables(value, nested=nested))
     return estimated_size
 
   def get_estimated_size_and_observables(self, value, nested=False):
@@ -1188,13 +1243,15 @@ class AbstractComponentCoderImpl(StreamCoderImpl):
     values = self._extract_components(value)
     estimated_size = 0
     observables = []  # type: Observables
-    for i in range(0, len(self._coder_impls)):
+    last = self._num_coders - 1
+    for i in range(0, self._num_coders):
       c = self._coder_impls[i]  # type cast
       child_size, child_observables = (
           c.get_estimated_size_and_observables(
-              values[i], nested=nested or i + 1 < len(self._coder_impls)))
+              values[i], nested=nested or i < last))
       estimated_size += child_size
-      observables += child_observables
+      if child_observables:
+        observables += child_observables
     return estimated_size, observables
 
 
@@ -1217,10 +1274,10 @@ class AvroCoderImpl(SimpleCoderImpl):
 class TupleCoderImpl(AbstractComponentCoderImpl):
   """A coder for tuple objects."""
   def _extract_components(self, value):
-    return tuple(value)
+    return value if isinstance(value, (tuple, list)) else tuple(value)
 
   def _construct_from_components(self, components):
-    return tuple(components)
+    return components if type(components) is tuple else tuple(components)
 
 
 class _ConcatSequence(object):
@@ -1303,7 +1360,9 @@ class SequenceCoderImpl(StreamCoderImpl):
   def encode_to_stream(self, value, out, nested):
     # type: (Sequence, create_OutputStream, bool) -> None
     # Compatible with Java's IterableLikeCoder.
-    if hasattr(value, '__len__') and self._write_state is None:
+    if self._write_state is None and (type(value) is tuple or
+                                      type(value) is list or
+                                      hasattr(value, '__len__')):
       out.write_bigendian_int32(len(value))
       for elem in value:
         self._elem_coder.encode_to_stream(elem, out, True)
@@ -1645,9 +1704,9 @@ class WindowedValueCoderImpl(StreamCoderImpl):
     # were indeed MIN/MAX timestamps.
     # TODO(https://github.com/apache/beam/issues/18190): Clean this up once we
     # have a BEAM wide consensus on precision of timestamps.
-    if timestamp <= -(abs(MIN_TIMESTAMP_micros) // 1000):
+    if timestamp <= MIN_TIMESTAMP_millis:
       timestamp = MIN_TIMESTAMP_micros
-    elif timestamp >= MAX_TIMESTAMP_micros // 1000:
+    elif timestamp >= MAX_TIMESTAMP_millis:
       timestamp = MAX_TIMESTAMP_micros
     else:
       timestamp *= 1000
@@ -1670,19 +1729,16 @@ class WindowedValueCoderImpl(StreamCoderImpl):
       # Should never be here.
       # TODO(robertwb): Remove when coders are set correctly.
       return 0, [(value, self._value_coder)]
-    estimated_size = 0
-    observables = []  # type: Observables
-    value_estimated_size, value_observables = (
+    wv = value  # type cast
+    value_estimated_size, observables = (
         self._value_coder.get_estimated_size_and_observables(
-            value.value, nested=nested))
-    estimated_size += value_estimated_size
-    observables += value_observables
-    estimated_size += (
-        self._timestamp_coder.estimate_size(value.timestamp, nested=True))
-    estimated_size += (
-        self._windows_coder.estimate_size(value.windows, nested=True))
-    estimated_size += (
-        self._pane_info_coder.estimate_size(value.pane_info, nested=True))
+            wv.value, nested=nested))
+    # Timestamp is always encoded as an 8-byte big-endian uint64; avoid
+    # accessing wv.timestamp which lazily allocates a Timestamp object.
+    estimated_size = (
+        value_estimated_size + 8 +
+        self._windows_coder.estimate_size(wv.windows, nested=True) +
+        self._pane_info_coder.estimate_size(wv.pane_info, nested=True))
     return estimated_size, observables
 
 
@@ -1720,14 +1776,8 @@ class ParamWindowedValueCoderImpl(WindowedValueCoderImpl):
       # Should never be here.
       # TODO(robertwb): Remove when coders are set correctly.
       return 0, [(value, self._value_coder)]
-    estimated_size = 0
-    observables = []
-    value_estimated_size, value_observables = (
-        self._value_coder.get_estimated_size_and_observables(
-            value.value, nested=nested))
-    estimated_size += value_estimated_size
-    observables += value_observables
-    return estimated_size, observables
+    return self._value_coder.get_estimated_size_and_observables(
+        value.value, nested=nested)
 
 
 class LengthPrefixCoderImpl(StreamCoderImpl):
@@ -1789,6 +1839,9 @@ class ShardedKeyCoderImpl(StreamCoderImpl):
     return estimated_size
 
 
+_TIMESTAMP_CODER_IMPL = TimestampCoderImpl()
+
+
 class TimestampPrefixingWindowCoderImpl(StreamCoderImpl):
   """For internal use only; no backwards-compatibility guarantees.
 
@@ -1803,17 +1856,15 @@ class TimestampPrefixingWindowCoderImpl(StreamCoderImpl):
     self._window_coder_impl = window_coder_impl
 
   def encode_to_stream(self, value, stream, nested):
-    TimestampCoderImpl().encode_to_stream(value.max_timestamp(), stream, nested)
+    _TIMESTAMP_CODER_IMPL.encode_to_stream(value.max_timestamp(), stream, nested)
     self._window_coder_impl.encode_to_stream(value, stream, nested)
 
   def decode_from_stream(self, stream, nested):
-    TimestampCoderImpl().decode_from_stream(stream, nested)
+    stream.read_bigendian_int64()
     return self._window_coder_impl.decode_from_stream(stream, nested)
 
   def estimate_size(self, value: Any, nested: bool = False) -> int:
-    return (
-        TimestampCoderImpl().estimate_size(value.max_timestamp()) +
-        self._window_coder_impl.estimate_size(value, nested))
+    return 8 + self._window_coder_impl.estimate_size(value, nested)
 
 
 _OpaqueWindow = None
@@ -1858,18 +1909,16 @@ class TimestampPrefixingOpaqueWindowCoderImpl(StreamCoderImpl):
     pass
 
   def encode_to_stream(self, value, stream, nested):
-    TimestampCoderImpl().encode_to_stream(value.max_timestamp(), stream, True)
+    _TIMESTAMP_CODER_IMPL.encode_to_stream(value.max_timestamp(), stream, True)
     stream.write(value.encoded_window, True)
 
   def decode_from_stream(self, stream, nested):
-    max_timestamp = TimestampCoderImpl().decode_from_stream(stream, True)
+    max_timestamp = _TIMESTAMP_CODER_IMPL.decode_from_stream(stream, True)
     return _create_opaque_window(
         max_timestamp.successor(), stream.read_all(True))
 
   def estimate_size(self, value: Any, nested: bool = False) -> int:
-    return (
-        TimestampCoderImpl().estimate_size(value.max_timestamp()) +
-        len(value.encoded_window))
+    return 8 + len(value.encoded_window)
 
 
 row_coders_registered = False
@@ -1935,6 +1984,19 @@ class RowCoderImpl(StreamCoderImpl):
     self.field_names = [f.name for f in self.schema.fields]
     self.field_nullable = [field.type.nullable for field in self.schema.fields]
     self.constructor = named_tuple_from_schema(schema)
+    self._constructor_is_tuple = (
+        isinstance(self.constructor, type) and
+        issubclass(self.constructor, tuple) and
+        getattr(self.constructor, '_fields', None) == tuple(self.field_names))
+    if self.num_fields == 1:
+      self._field0_name = self.field_names[0]
+      self._attr_getter = None
+    elif self.num_fields > 1:
+      self._field0_name = None
+      self._attr_getter = operator.attrgetter(*self.field_names)
+    else:
+      self._field0_name = None
+      self._attr_getter = None
     self.encoding_positions = list(range(len(self.schema.fields)))
     if self.schema.encoding_positions_set:
       # should never be duplicate encoding positions.
@@ -1948,12 +2010,11 @@ class RowCoderImpl(StreamCoderImpl):
             but found fields without encoding_position set: {names_no_pos}''')
       self.encoding_positions = list(
           field.encoding_position for field in self.schema.fields)
-    self.encoding_positions_argsort = list(np.argsort(self.encoding_positions))
+    self.encoding_positions_argsort = np.argsort(
+        self.encoding_positions).tolist()
     self.encoding_positions_are_trivial = self.encoding_positions == list(
         range(len(self.encoding_positions)))
-    self.components = list(
-        components[self.encoding_positions.index(i)].get_impl()
-        for i in self.encoding_positions)
+    self.components = [c.get_impl() for c in components]
     self.has_nullable_fields = any(
         field.type.nullable for field in self.schema.fields)
     self.static_encoding = any(
@@ -1961,7 +2022,14 @@ class RowCoderImpl(StreamCoderImpl):
         opt.value.atomic_value.boolean for opt in self.schema.options)
 
   def encode_to_stream(self, value, out, nested):
-    attrs = [getattr(value, name) for name in self.field_names]
+    if self._constructor_is_tuple and type(value) is self.constructor:
+      attrs = value
+    elif self.num_fields == 1:
+      attrs = (getattr(value, self._field0_name), )
+    elif self.num_fields > 1:
+      attrs = self._attr_getter(value)
+    else:
+      attrs = ()
 
     if not self.static_encoding:
       out.write_var_int64(self.num_fields)
@@ -2077,10 +2145,12 @@ class RowCoderImpl(StreamCoderImpl):
     while len(sorted_components) < self.num_fields:
       sorted_components.append(None)
 
-    return self.constructor(
-        *(
-            sorted_components if self.encoding_positions_are_trivial else
-            [sorted_components[i] for i in self.encoding_positions]))
+    args = (
+        sorted_components if self.encoding_positions_are_trivial else
+        [sorted_components[i] for i in self.encoding_positions])
+    if self._constructor_is_tuple:
+      return tuple.__new__(self.constructor, args)
+    return self.constructor(*args)
 
   def decode_batch_from_stream(self, dest: Dict[str, np.ndarray], in_stream):
     attrs = self._row_column_encoders(dest)

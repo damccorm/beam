@@ -26,6 +26,7 @@ import contextlib
 import hashlib
 import hmac
 import logging
+import operator
 import random
 import re
 import threading
@@ -1676,21 +1677,25 @@ class _WindowAwareSortAndBatchElementsDoFn(DoFn):
     if not buffer:
       return
 
-    # Sort elements by size (ascending)
-    sorted_elements = sorted(buffer, key=self._element_size_fn)
+    # Compute size once per element and sort by size (ascending)
+    element_size_fn = self._element_size_fn
+    sized_elements = [(element_size_fn(el), el) for el in buffer]
+    sized_elements.sort(key=operator.itemgetter(0))
 
     batch = []
     batch_weight = 0
+    max_batch_size = self._max_batch_size
+    max_batch_weight = self._max_batch_weight
+    win_max_ts = win.max_timestamp()
+    win_tuple = (win, )
 
-    for element in sorted_elements:
-      element_size = self._element_size_fn(element)
-
-      would_exceed_count = len(batch) >= self._max_batch_size
+    for element_size, element in sized_elements:
+      would_exceed_count = len(batch) >= max_batch_size
       would_exceed_weight = (
-          batch_weight + element_size > self._max_batch_weight and batch)
+          batch_weight + element_size > max_batch_weight and batch)
 
       if would_exceed_count or would_exceed_weight:
-        yield windowed_value.WindowedValue(batch, win.max_timestamp(), (win, ))
+        yield windowed_value.WindowedValue(batch, win_max_ts, win_tuple)
         batch = []
         batch_weight = 0
 
@@ -1698,7 +1703,7 @@ class _WindowAwareSortAndBatchElementsDoFn(DoFn):
       batch_weight += element_size
 
     if batch:
-      yield windowed_value.WindowedValue(batch, win.max_timestamp(), (win, ))
+      yield windowed_value.WindowedValue(batch, win_max_ts, win_tuple)
 
   def finish_bundle(self):
     for win in list(self._buffers.keys()):

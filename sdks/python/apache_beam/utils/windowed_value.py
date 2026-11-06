@@ -40,6 +40,9 @@ from apache_beam.utils.timestamp import MIN_TIMESTAMP
 from apache_beam.utils.timestamp import Timestamp
 from apache_beam.utils.timestamp import TimestampTypes  # pylint: disable=unused-import
 
+_MIN_TIMESTAMP_MICROS = MIN_TIMESTAMP.micros
+_MAX_TIMESTAMP_MICROS = MAX_TIMESTAMP.micros
+
 if TYPE_CHECKING:
   from apache_beam.transforms.window import BoundedWindow
 
@@ -254,9 +257,12 @@ class WindowedValue(object):
     return NotImplemented
 
   def __hash__(self):
+    windows = (
+        self.windows
+        if isinstance(self.windows, tuple) else tuple(self.windows))
     return ((hash(self.value) & 0xFFFFFFFFFFFFFFF) + 3 *
             (self.timestamp_micros & 0xFFFFFFFFFFFFFF) + 7 *
-            (hash(tuple(self.windows)) & 0xFFFFFFFFFFFFF) + 11 *
+            (hash(windows) & 0xFFFFFFFFFFFFF) + 11 *
             (hash(self.pane_info) & 0xFFFFFFFFFFFFF))
 
   def with_value(self, new_value):
@@ -372,12 +378,15 @@ class HomogeneousWindowedBatch(WindowedBatch):
   def from_windowed_values(
       windowed_values: Sequence[WindowedValue], *,
       produce_fn: Callable) -> Iterable['WindowedBatch']:
-    grouped = collections.defaultdict(lambda: [])
+    grouped = collections.defaultdict(list)
     for wv in windowed_values:
-      grouped[wv.with_value(None)].append(wv.value)
+      windows = (
+          wv.windows if isinstance(wv.windows, tuple) else tuple(wv.windows))
+      grouped[(wv.timestamp_micros, windows, wv.pane_info)].append(wv.value)
 
-    for key, values in grouped.items():
-      yield HomogeneousWindowedBatch(key.with_value(produce_fn(values)))
+    for (ts_micros, windows, pane_info), values in grouped.items():
+      yield HomogeneousWindowedBatch(
+          create(produce_fn(values), ts_micros, windows, pane_info))
 
 
 try:
@@ -394,26 +403,34 @@ class _IntervalWindowBase(object):
   """
   def __init__(self, start, end):
     # type: (TimestampTypes, TimestampTypes) -> None
-    if start is not None:
-      self._start_object = Timestamp.of(start)  # type: Optional[Timestamp]
+    if isinstance(start, int) and -9223372036854 <= start <= 9223372036854:
+      self._start_micros = start * 1000000
+      self._start_object = None  # type: Optional[Timestamp]
+    elif start is not None:
+      self._start_object = (
+          start if isinstance(start, Timestamp) else Timestamp.of(start))
       try:
         self._start_micros = self._start_object.micros
       except OverflowError:
         self._start_micros = (
-            MIN_TIMESTAMP.micros
-            if self._start_object.micros < 0 else MAX_TIMESTAMP.micros)
+            _MIN_TIMESTAMP_MICROS
+            if self._start_object.micros < 0 else _MAX_TIMESTAMP_MICROS)
     else:
       # Micros must be populated elsewhere.
       self._start_object = None
 
-    if end is not None:
-      self._end_object = Timestamp.of(end)  # type: Optional[Timestamp]
+    if isinstance(end, int) and -9223372036854 <= end <= 9223372036854:
+      self._end_micros = end * 1000000
+      self._end_object = None  # type: Optional[Timestamp]
+    elif end is not None:
+      self._end_object = (
+          end if isinstance(end, Timestamp) else Timestamp.of(end))
       try:
         self._end_micros = self._end_object.micros
       except OverflowError:
         self._end_micros = (
-            MIN_TIMESTAMP.micros
-            if self._end_object.micros < 0 else MAX_TIMESTAMP.micros)
+            _MIN_TIMESTAMP_MICROS
+            if self._end_object.micros < 0 else _MAX_TIMESTAMP_MICROS)
     else:
       # Micros must be populated elsewhere.
       self._end_object = None
@@ -436,21 +453,38 @@ class _IntervalWindowBase(object):
     # Cut off window at start/end timestamps for comparison purposes since some
     # portable runners do this already, and timestamps outside of the bands of
     # Min/Max timestamps are functionally equal to Min/Max.
-    start = max(self._start_micros, MIN_TIMESTAMP.micros)
-    end = min(self._end_micros, MAX_TIMESTAMP.micros)
+    start = self._start_micros
+    if start < _MIN_TIMESTAMP_MICROS:
+      start = _MIN_TIMESTAMP_MICROS
+    end = self._end_micros
+    if end > _MAX_TIMESTAMP_MICROS:
+      end = _MAX_TIMESTAMP_MICROS
     return hash((start, end))
 
   def __eq__(self, other):
-    if type(self) != type(other):
+    if self is other:
+      return True
+    if type(self) is not type(other):
       return False
+    if (self._start_micros == other._start_micros and
+        self._end_micros == other._end_micros):
+      return True
 
     # Cut off window at start/end timestamps for comparison purposes since some
     # portable runners do this already, and timestamps outside of the bands of
     # Min/Max timestamps are functionally equal to Min/Max.
-    self_start = max(self._start_micros, MIN_TIMESTAMP.micros)
-    self_end = min(self._end_micros, MAX_TIMESTAMP.micros)
-    other_start = max(other._start_micros, MIN_TIMESTAMP.micros)
-    other_end = min(other._end_micros, MAX_TIMESTAMP.micros)
+    self_start = (
+        _MIN_TIMESTAMP_MICROS
+        if self._start_micros < _MIN_TIMESTAMP_MICROS else self._start_micros)
+    self_end = (
+        _MAX_TIMESTAMP_MICROS
+        if self._end_micros > _MAX_TIMESTAMP_MICROS else self._end_micros)
+    other_start = (
+        _MIN_TIMESTAMP_MICROS
+        if other._start_micros < _MIN_TIMESTAMP_MICROS else other._start_micros)
+    other_end = (
+        _MAX_TIMESTAMP_MICROS
+        if other._end_micros > _MAX_TIMESTAMP_MICROS else other._end_micros)
 
     return (self_start == other_start and self_end == other_end)
 

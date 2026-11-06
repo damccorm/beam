@@ -377,6 +377,62 @@ class TypedWindowedValue(Generic[T]):
     raise NotImplementedError("This class is solely for type inference")
 
 
+_PRIMITIVE_PASS_THROUGH = frozenset(
+    (int, float, str, bytes, bool, object, complex, type(None), None))
+
+_TYPE_MAP = [
+    # TODO(https://github.com/apache/beam/issues/20076): Currently
+    # unsupported.
+    _TypeMapEntry(match=is_new_type, arity=0, beam_type=typehints.Any),
+    # TODO(https://github.com/apache/beam/issues/19954): Currently
+    # unsupported.
+    _TypeMapEntry(match=is_forward_ref, arity=0, beam_type=typehints.Any),
+    _TypeMapEntry(match=is_any, arity=0, beam_type=typehints.Any),
+    _TypeMapEntry(match=_match_is_dict, arity=2, beam_type=typehints.Dict),
+    _TypeMapEntry(
+        match=_match_is_exactly_iterable,
+        arity=1,
+        beam_type=typehints.Iterable),
+    _TypeMapEntry(
+        match=_match_is_primitive(list), arity=1, beam_type=typehints.List),
+    # FrozenSets are a specific instance of a set, so we check this first.
+    _TypeMapEntry(
+        match=_match_is_primitive(frozenset),
+        arity=1,
+        beam_type=typehints.FrozenSet),
+    _TypeMapEntry(match=_match_is_set, arity=1, beam_type=typehints.Set),
+    # NamedTuple is a subclass of Tuple, but it needs special handling.
+    # We just convert it to Any for now.
+    # This MUST appear before the entry for the normal Tuple.
+    _TypeMapEntry(match=match_is_named_tuple, arity=0, beam_type=typehints.Any),
+    _TypeMapEntry(
+        match=_match_is_primitive(tuple), arity=-1, beam_type=typehints.Tuple),
+    _TypeMapEntry(match=_match_is_union, arity=-1, beam_type=typehints.Union),
+    _TypeMapEntry(
+        match=_match_issubclass(collections.abc.Generator),
+        arity=3,
+        beam_type=typehints.Generator),
+    _TypeMapEntry(
+        match=_match_issubclass(collections.abc.Iterator),
+        arity=1,
+        beam_type=typehints.Iterator),
+    _TypeMapEntry(
+        match=_match_is_exactly_collection,
+        arity=1,
+        beam_type=typehints.Collection),
+    _TypeMapEntry(
+        match=_match_issubclass(TypedWindowedValue),
+        arity=1,
+        beam_type=typehints.WindowedValue),
+    _TypeMapEntry(
+        match=_match_is_exactly_sequence,
+        arity=1,
+        beam_type=typehints.Sequence),
+    _TypeMapEntry(
+        match=_match_is_exactly_mapping, arity=2, beam_type=typehints.Mapping),
+]
+
+
 def convert_to_beam_type(typ):
   """Convert a given typing type to a Beam type.
 
@@ -391,6 +447,13 @@ def convert_to_beam_type(typ):
   Raises:
     ValueError: The type was malformed.
   """
+  if (typ.__class__ is type or typ is None) and typ in _PRIMITIVE_PASS_THROUGH:
+    return typ
+  if isinstance(typ, typehints.TypeConstraint):
+    return typ
+  if typ is typing.Any:
+    return typehints.Any
+
   # Convert `int | float` to typing.Union[int, float]
   # pipe operator as Union and types.UnionType are introduced
   # in Python 3.10.
@@ -451,63 +514,8 @@ def convert_to_beam_type(typ):
     # Support more collections types
     return typ
 
-  type_map = [
-      # TODO(https://github.com/apache/beam/issues/20076): Currently
-      # unsupported.
-      _TypeMapEntry(match=is_new_type, arity=0, beam_type=typehints.Any),
-      # TODO(https://github.com/apache/beam/issues/19954): Currently
-      # unsupported.
-      _TypeMapEntry(match=is_forward_ref, arity=0, beam_type=typehints.Any),
-      _TypeMapEntry(match=is_any, arity=0, beam_type=typehints.Any),
-      _TypeMapEntry(match=_match_is_dict, arity=2, beam_type=typehints.Dict),
-      _TypeMapEntry(
-          match=_match_is_exactly_iterable,
-          arity=1,
-          beam_type=typehints.Iterable),
-      _TypeMapEntry(
-          match=_match_is_primitive(list), arity=1, beam_type=typehints.List),
-      # FrozenSets are a specific instance of a set, so we check this first.
-      _TypeMapEntry(
-          match=_match_is_primitive(frozenset),
-          arity=1,
-          beam_type=typehints.FrozenSet),
-      _TypeMapEntry(match=_match_is_set, arity=1, beam_type=typehints.Set),
-      # NamedTuple is a subclass of Tuple, but it needs special handling.
-      # We just convert it to Any for now.
-      # This MUST appear before the entry for the normal Tuple.
-      _TypeMapEntry(
-          match=match_is_named_tuple, arity=0, beam_type=typehints.Any),
-      _TypeMapEntry(
-          match=_match_is_primitive(tuple), arity=-1,
-          beam_type=typehints.Tuple),
-      _TypeMapEntry(match=_match_is_union, arity=-1, beam_type=typehints.Union),
-      _TypeMapEntry(
-          match=_match_issubclass(collections.abc.Generator),
-          arity=3,
-          beam_type=typehints.Generator),
-      _TypeMapEntry(
-          match=_match_issubclass(collections.abc.Iterator),
-          arity=1,
-          beam_type=typehints.Iterator),
-      _TypeMapEntry(
-          match=_match_is_exactly_collection,
-          arity=1,
-          beam_type=typehints.Collection),
-      _TypeMapEntry(
-          match=_match_issubclass(TypedWindowedValue),
-          arity=1,
-          beam_type=typehints.WindowedValue),
-      _TypeMapEntry(
-          match=_match_is_exactly_sequence,
-          arity=1,
-          beam_type=typehints.Sequence),
-      _TypeMapEntry(
-          match=_match_is_exactly_mapping, arity=2,
-          beam_type=typehints.Mapping),
-  ]
-
   # Find the first matching entry.
-  matched_entry = next((entry for entry in type_map if entry.match(typ)), None)
+  matched_entry = next((entry for entry in _TYPE_MAP if entry.match(typ)), None)
   if not matched_entry:
     # Please add missing type support if you see this message.
     _LOGGER.info('Using Any for unsupported type: %s', typ)

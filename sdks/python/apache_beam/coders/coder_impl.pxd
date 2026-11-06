@@ -72,6 +72,7 @@ cdef unsigned char UNKNOWN_TYPE, NONE_TYPE, INT_TYPE, FLOAT_TYPE, BOOL_TYPE
 cdef unsigned char BYTES_TYPE, UNICODE_TYPE, LIST_TYPE, TUPLE_TYPE, DICT_TYPE
 cdef unsigned char SET_TYPE, ITERABLE_LIKE_TYPE
 cdef unsigned char PROTO_TYPE, DATACLASS_TYPE, NAMED_TUPLE_TYPE
+cdef unsigned char ENUM_TYPE, NESTED_STATE_TYPE, DATACLASS_KW_ONLY_TYPE
 
 
 cdef set _ITERABLE_LIKE_TYPES
@@ -84,8 +85,8 @@ cdef class FastPrimitivesCoderImpl(StreamCoderImpl):
   cdef bint force_use_dill
   cdef bint use_relative_filepaths
 
-  @cython.locals(dict_value=dict, int_value=libc.stdint.int64_t,
-                 unicode_value=unicode)
+  @cython.locals(dict_value=dict, list_value=list, tuple_value=tuple,
+                 int_value=libc.stdint.int64_t, unicode_value=unicode)
   cpdef encode_to_stream(self, value, OutputStream stream, bint nested)
   @cython.locals(t=int)
   cpdef decode_from_stream(self, InputStream stream, bint nested)
@@ -106,6 +107,10 @@ cdef class MapCoderImpl(StreamCoderImpl):
 
 
 cdef class BytesCoderImpl(CoderImpl):
+  pass
+
+
+cdef class StrUtf8CoderImpl(CoderImpl):
   pass
 
 
@@ -150,16 +155,20 @@ cdef class SingletonCoderImpl(CoderImpl):
 
 cdef class AbstractComponentCoderImpl(StreamCoderImpl):
   cdef tuple _coder_impls
+  cdef int _num_coders
+  cdef bint _is_kv
+  cdef CoderImpl _coder_0
+  cdef CoderImpl _coder_1
 
   cpdef _extract_components(self, value)
   cpdef _construct_from_components(self, components)
 
-  @cython.locals(c=CoderImpl)
+  @cython.locals(c=CoderImpl, i=int, last=int)
   cpdef encode_to_stream(self, value, OutputStream stream, bint nested)
-  @cython.locals(c=CoderImpl)
+  @cython.locals(c=CoderImpl, i=int, last=int)
   cpdef decode_from_stream(self, InputStream stream, bint nested)
 
-  @cython.locals(c=CoderImpl)
+  @cython.locals(c=CoderImpl, i=int, last=int)
   cpdef get_estimated_size_and_observables(self, value, bint nested=?)
 
 
@@ -231,6 +240,8 @@ cdef class PaneInfoCoderImpl(StreamCoderImpl):
 cdef libc.stdint.uint64_t _TIME_SHIFT
 cdef libc.stdint.int64_t MIN_TIMESTAMP_micros
 cdef libc.stdint.int64_t MAX_TIMESTAMP_micros
+cdef libc.stdint.int64_t MIN_TIMESTAMP_millis
+cdef libc.stdint.int64_t MAX_TIMESTAMP_millis
 
 
 cdef class _OrderedUnionCoderImpl(StreamCoderImpl):
@@ -255,7 +266,7 @@ cdef class WindowedValueCoderImpl(StreamCoderImpl):
   cdef libc.stdint.uint64_t _to_normal_time(self, libc.stdint.int64_t value)
   cdef libc.stdint.int64_t _from_normal_time(self, libc.stdint.uint64_t value)
 
-  @cython.locals(c=CoderImpl)
+  @cython.locals(wv=windowed_value.WindowedValue, c=CoderImpl)
   cpdef get_estimated_size_and_observables(self, value, bint nested=?)
 
   @cython.locals(timestamp=libc.stdint.int64_t)
@@ -276,6 +287,9 @@ cdef class LengthPrefixCoderImpl(StreamCoderImpl):
   cdef CoderImpl _value_coder
 
 
+cdef TimestampCoderImpl _TIMESTAMP_CODER_IMPL
+
+
 cdef class RowColumnEncoder:
   cdef bint encode_to_stream(self, size_t index, OutputStream stream) except -1
   cdef bint decode_from_stream(self, size_t index, InputStream stream) except -1
@@ -292,6 +306,9 @@ cdef class RowCoderImpl(StreamCoderImpl):
   cdef list field_names
   cdef list field_nullable
   cdef object constructor
+  cdef bint _constructor_is_tuple
+  cdef object _attr_getter
+  cdef object _field0_name
   cdef list encoding_positions
   cdef list encoding_positions_argsort
   cdef bint encoding_positions_are_trivial
@@ -299,11 +316,13 @@ cdef class RowCoderImpl(StreamCoderImpl):
   cdef bint has_nullable_fields
   cdef bint static_encoding
 
-  @cython.locals(i=int, nvals=libc.stdint.int64_t, running=int, component_coder=CoderImpl,
-                 null_mask=bytes, null_mask_c=char_ptr)
+  @cython.locals(i=int, nvals=libc.stdint.int64_t, null_mask_len=libc.stdint.int64_t,
+                 running=int, component_coder=CoderImpl,
+                 null_mask_py=bytes, null_mask_c=char_ptr)
   cpdef decode_from_stream(self, InputStream stream, bint nested)
 
-  @cython.locals(i=int, nvals=libc.stdint.int64_t, k=size_t, n=size_t,
+  @cython.locals(i=int, nvals=libc.stdint.int64_t, null_mask_len=libc.stdint.int64_t,
+                 k=size_t, n=size_t,
                  null_mask=bytes, null_mask_c=char_ptr)
   cpdef decode_batch_from_stream(self, dict dest, InputStream stream)
 

@@ -28,10 +28,24 @@ cdef unsigned long long* POWER_TEN = [10e-1, 10e0, 10e1, 10e2, 10e3, 10e4, 10e5,
 
 
 cdef int64_t get_log10_round_to_floor(int64_t element):
-  cdef int power = 0
-  while element >= POWER_TEN[power]:
-    power += 1
-  return power - 1
+  if element >= 1000000000:
+    if element >= 100000000000000:
+      if element >= 100000000000000000:
+        return 18 if element >= 1000000000000000000 else 17
+      return (16 if element >= 10000000000000000
+              else (15 if element >= 1000000000000000 else 14))
+    if element >= 100000000000:
+      return (13 if element >= 10000000000000
+              else (12 if element >= 1000000000000 else 11))
+    return 10 if element >= 10000000000 else 9
+  else:
+    if element >= 10000:
+      if element >= 10000000:
+        return 8 if element >= 100000000 else 7
+      return 6 if element >= 1000000 else (5 if element >= 100000 else 4)
+    if element >= 100:
+      return 3 if element >= 1000 else 2
+    return 1 if element >= 10 else 0
 
 
 cdef class DataflowDistributionCounter(object):

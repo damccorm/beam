@@ -466,16 +466,29 @@ def _find_imported_submodules(code, top_level_dependencies):
   return subimports
 
 
+_RELATIVE_PATH_CACHE = {}
+_RELATIVE_PATH_SYS_PATH_KEY = None
+
+
 def get_relative_path(path):
   """Returns the path of a filename relative to the longest matching directory
   in sys.path.
   Args:
     path: The path to the file.
   """
+  global _RELATIVE_PATH_SYS_PATH_KEY
+  sys_path_key = tuple(sys.path)
+  if sys_path_key != _RELATIVE_PATH_SYS_PATH_KEY:
+    _RELATIVE_PATH_CACHE.clear()
+    _RELATIVE_PATH_SYS_PATH_KEY = sys_path_key
+  cached = _RELATIVE_PATH_CACHE.get(path)
+  if cached is not None:
+    return cached
+
   abs_path = os.path.abspath(path)
   longest_match = ""
 
-  for dir_path in sys.path:
+  for dir_path in sys_path_key:
     if not dir_path.endswith(os.path.sep):
       dir_path += os.path.sep
 
@@ -483,8 +496,11 @@ def get_relative_path(path):
       longest_match = dir_path
 
   if not longest_match:
-    return path
-  return os.path.relpath(abs_path, longest_match)
+    res = path
+  else:
+    res = os.path.relpath(abs_path, longest_match)
+  _RELATIVE_PATH_CACHE[path] = res
+  return res
 
 
 # relevant opcodes
@@ -1476,6 +1492,13 @@ class Pickler(pickle.Pickler):
       config: CloudPickleConfig = DEFAULT_CONFIG):
     if protocol is None:
       protocol = DEFAULT_PROTOCOL
+    # Provide a plain dict for self.dispatch_table BEFORE super().__init__()
+    # so CPython's _pickle.c Pickler_init caches this exact dict in
+    # self->dispatch_table and takes the PyDict_CheckExact fast path instead of
+    # PyObject_GetItem on a ChainMap.
+    if not PYPY:
+      self.dispatch_table = copyreg.dispatch_table.copy()
+      self.dispatch_table.update(self._dispatch_table)
     super().__init__(file, protocol=protocol, buffer_callback=buffer_callback)
     # map functions __globals__ attribute ids, to ensure that functions
     # sharing the same global namespace at pickling time also share
@@ -1543,6 +1566,12 @@ class Pickler(pickle.Pickler):
               https://github.com/cloudpipe/cloudpickle/issues/248
             """
       t = type(obj)
+      if t is types.FunctionType:
+        return self._function_reduce(obj)
+      elif t is types.CodeType:
+        return _code_reduce(obj, self.config)
+      elif t is typing.TypeVar:
+        return _typevar_reduce(obj, self.config)
       try:
         is_anyclass = issubclass(t, type)
       except TypeError:  # t is not a class (old Boost; see SF #502085)

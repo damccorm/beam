@@ -23,6 +23,14 @@ For internal use only; no backwards-compatibility guarantees.
 
 import struct
 
+_BYTE_TABLE = [bytes((i, )) for i in range(256)]
+_STRUCT_Q = struct.Struct('>q')
+_STRUCT_UQ = struct.Struct('>Q')
+_STRUCT_I = struct.Struct('>i')
+_STRUCT_H = struct.Struct('>h')
+_STRUCT_D = struct.Struct('>d')
+_STRUCT_F = struct.Struct('>f')
+
 
 class OutputStream(object):
   """For internal use only; no backwards-compatibility guarantees.
@@ -140,10 +148,13 @@ class InputStream(object):
     return self.data[self.pos - 1]
 
   def read_var_int64(self):
+    byte = self.data[self.pos]
+    self.pos += 1
+    if byte <= 0x7F:
+      return byte
     shift = 0
     result = 0
     while True:
-      byte = self.read_byte()
       if byte < 0:
         raise RuntimeError('VarLong not terminated.')
 
@@ -154,6 +165,7 @@ class InputStream(object):
       shift += 7
       if not byte & 0x80:
         break
+      byte = self.read_byte()
     if result >= 1 << 63:
       result -= 1 << 64
     return result
@@ -163,22 +175,28 @@ class InputStream(object):
     return struct.unpack('<i', struct.pack('<I', v))[0]
 
   def read_bigendian_int64(self):
-    return struct.unpack('>q', self.read(8))[0]
+    self.pos += 8
+    return _STRUCT_Q.unpack_from(self.data, self.pos - 8)[0]
 
   def read_bigendian_uint64(self):
-    return struct.unpack('>Q', self.read(8))[0]
+    self.pos += 8
+    return _STRUCT_UQ.unpack_from(self.data, self.pos - 8)[0]
 
   def read_bigendian_int32(self):
-    return struct.unpack('>i', self.read(4))[0]
+    self.pos += 4
+    return _STRUCT_I.unpack_from(self.data, self.pos - 4)[0]
 
   def read_bigendian_int16(self):
-    return struct.unpack('>h', self.read(2))[0]
+    self.pos += 2
+    return _STRUCT_H.unpack_from(self.data, self.pos - 2)[0]
 
   def read_bigendian_double(self):
-    return struct.unpack('>d', self.read(8))[0]
+    self.pos += 8
+    return _STRUCT_D.unpack_from(self.data, self.pos - 8)[0]
 
   def read_bigendian_float(self):
-    return struct.unpack('>f', self.read(4))[0]
+    self.pos += 4
+    return _STRUCT_F.unpack_from(self.data, self.pos - 4)[0]
 
 
 def get_varint_size(v):

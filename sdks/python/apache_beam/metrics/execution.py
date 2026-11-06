@@ -299,36 +299,16 @@ class MetricsContainer(object):
 
     This returns all the cumulative values for all metrics.
     """
-    counters = {
-        MetricKey(self.step_name, k.metric_name): v.get_cumulative()
-        for k, v in self.metrics.items() if k.cell_type == CounterCell
-    }
-
-    distributions = {
-        MetricKey(self.step_name, k.metric_name): v.get_cumulative()
-        for k, v in self.metrics.items() if k.cell_type == DistributionCell
-    }
-
-    gauges = {
-        MetricKey(self.step_name, k.metric_name): v.get_cumulative()
-        for k, v in self.metrics.items() if k.cell_type == GaugeCell
-    }
-
-    string_sets = {
-        MetricKey(self.step_name, k.metric_name): v.get_cumulative()
-        for k, v in self.metrics.items() if k.cell_type == StringSetCell
-    }
-
-    bounded_tries = {
-        MetricKey(self.step_name, k.metric_name): v.get_cumulative()
-        for k, v in self.metrics.items() if k.cell_type == BoundedTrieCell
-    }
-
-    histograms = {
-        MetricKey(self.step_name, k.metric_name): v.get_cumulative()
-        for k, v in self.metrics.items()
-        if isinstance(k.cell_type, HistogramCellFactory)
-    }
+    counters, distributions, gauges = {}, {}, {}
+    string_sets, bounded_tries, histograms = {}, {}, {}
+    by_type = {CounterCell: counters, DistributionCell: distributions,
+               GaugeCell: gauges, StringSetCell: string_sets,
+               BoundedTrieCell: bounded_tries}
+    for k, v in self.metrics.items():
+      d = by_type.get(k.cell_type, histograms if isinstance(
+          k.cell_type, HistogramCellFactory) else None)
+      if d is not None:
+        d[MetricKey(self.step_name, k.metric_name)] = v.get_cumulative()
 
     return MetricUpdates(
         counters, distributions, gauges, string_sets, bounded_tries, histograms)

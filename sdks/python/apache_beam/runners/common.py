@@ -990,20 +990,20 @@ class PerWindowInvoker(DoFnInvoker):
       additional_kwargs,
   ):
     # type: (...) -> Optional[SplitResultResidual]
-    if self.has_cached_window_args:
+    if self.has_windowed_inputs:
+      window = windowed_value.windows[0]
+    else:
+      window = GlobalWindow()
+    if self.has_cached_window_args and not additional_args:
       args_for_process, kwargs_for_process = (
           self.args_for_process, self.kwargs_for_process)
     else:
-      if self.has_windowed_inputs:
-        assert len(windowed_value.windows) <= 1
-        window, = windowed_value.windows
-      else:
-        window = GlobalWindow()
       side_inputs = [si[window] for si in self.side_inputs]
-      side_inputs.extend(additional_args)
+      if additional_args:
+        side_inputs.extend(additional_args)
       args_for_process, kwargs_for_process = util.insert_values_in_args(
           self.args_for_process, self.kwargs_for_process, side_inputs)
-      if not self.recalculate_window_args:
+      if not self.recalculate_window_args and not additional_args:
         self.args_for_process, self.kwargs_for_process = (
             args_for_process, kwargs_for_process)
         self.has_cached_window_args = True
@@ -1021,17 +1021,17 @@ class PerWindowInvoker(DoFnInvoker):
             'instead, got \'%s\'.') % (windowed_value.value, ))
 
     for i, p in self.placeholders_for_process:
-      if core.DoFn.ElementParam == p:
+      if p is core.DoFn.ElementParam or core.DoFn.ElementParam == p:
         args_for_process[i] = windowed_value.value
-      elif core.DoFn.KeyParam == p:
+      elif p is core.DoFn.KeyParam or core.DoFn.KeyParam == p:
         args_for_process[i] = key
-      elif core.DoFn.WindowParam == p:
+      elif p is core.DoFn.WindowParam or core.DoFn.WindowParam == p:
         args_for_process[i] = window
-      elif core.DoFn.WindowedValueParam == p:
+      elif p is core.DoFn.WindowedValueParam or core.DoFn.WindowedValueParam == p:
         args_for_process[i] = windowed_value
-      elif core.DoFn.TimestampParam == p:
+      elif p is core.DoFn.TimestampParam or core.DoFn.TimestampParam == p:
         args_for_process[i] = windowed_value.timestamp
-      elif core.DoFn.PaneInfoParam == p:
+      elif p is core.DoFn.PaneInfoParam or core.DoFn.PaneInfoParam == p:
         args_for_process[i] = windowed_value.pane_info
       elif isinstance(p, core.DoFn.StateParam):
         assert self.user_state_context is not None

@@ -720,15 +720,18 @@ class TupleHint(CompositeTypeHint):
             "type 'tuple'. Instead, an instance of '%s' was received." %
             tuple_instance.__class__.__name__)
 
-      if len(tuple_instance) != len(self.tuple_types):
+      tuple_types = self.tuple_types
+      expected_len = len(tuple_types)
+      if len(tuple_instance) != expected_len:
         raise CompositeTypeHintError(
             'Passed object instance is of the proper type, but differs in '
             'length from the hinted type. Expected a tuple of length %s, '
             'received a tuple of length %s.' %
-            (len(self.tuple_types), len(tuple_instance)))
+            (expected_len, len(tuple_instance)))
 
-      for type_pos, (expected, actual) in enumerate(zip(self.tuple_types,
-                                                        tuple_instance)):
+      for type_pos in range(expected_len):
+        expected = tuple_types[type_pos]
+        actual = tuple_instance[type_pos]
         try:
           check_constraint(expected, actual)
           continue
@@ -1497,19 +1500,10 @@ def is_consistent_with(
   relation, but also handles the special Any type as well as type
   parameterization.
   """
-  if use_beartype is None:
-    from apache_beam.options.pipeline_options_context import get_pipeline_options
-    options = get_pipeline_options()
-    if options:
-      from apache_beam.options.pipeline_options import TypeOptions
-      use_beartype = not options.view_as(TypeOptions).disable_beartype
-    else:
-      use_beartype = True
-
-  from apache_beam.pvalue import Row
-  from apache_beam.typehints.row_type import RowTypeConstraint
-  if sub == base:
+  if sub is base or sub == base:
     # Common special case.
+    return True
+  if isinstance(sub, AnyTypeConstraint) or isinstance(base, AnyTypeConstraint):
     return True
   # Per PEP484, ints are considered floats and complexes and
   # floats are considered complexes.
@@ -1525,7 +1519,10 @@ def is_consistent_with(
     return all(is_consistent_with(c, base) for c in sub.union_types)
   elif isinstance(base, TypeConstraint):
     return base._consistent_with_check_(sub)
-  elif isinstance(sub, RowTypeConstraint):
+
+  from apache_beam.pvalue import Row
+  from apache_beam.typehints.row_type import RowTypeConstraint
+  if isinstance(sub, RowTypeConstraint):
     return base == Row
   elif isinstance(sub, TypeConstraint):
     # Nothing but object lives above any type constraints.
@@ -1536,6 +1533,14 @@ def is_consistent_with(
     # Cannot check unsupported parameterized generic which will cause issubclass
     # to fail with an exception.
     return False
+  if use_beartype is None:
+    from apache_beam.options.pipeline_options_context import get_pipeline_options
+    options = get_pipeline_options()
+    if options:
+      from apache_beam.options.pipeline_options import TypeOptions
+      use_beartype = not options.view_as(TypeOptions).disable_beartype
+    else:
+      use_beartype = True
   if use_beartype:
     try:
       return is_subhint(sub, base)

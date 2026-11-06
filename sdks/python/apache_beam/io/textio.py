@@ -292,8 +292,10 @@ class _TextSource(filebasedsource.FileBasedSource):
     current_pos = read_buffer.position
 
     # b'\n' use as default
-    delimiter = self._delimiter or b'\n'
+    is_default_delim = self._delimiter is None
+    delimiter = b'\n' if is_default_delim else self._delimiter
     delimiter_len = len(delimiter)
+    has_escape = self._escapechar is not None
 
     while True:
       if current_pos >= len(read_buffer.data) - delimiter_len + 1:
@@ -308,18 +310,16 @@ class _TextSource(filebasedsource.FileBasedSource):
       next_delim = read_buffer.data.find(delimiter, current_pos)
 
       if next_delim >= 0:
-        if (self._delimiter is None and
-            read_buffer.data[next_delim - 1:next_delim] == b'\r'):
-          if self._escapechar is not None and self._is_escaped(read_buffer,
-                                                               next_delim - 1):
+        if (is_default_delim and next_delim > 0 and
+            read_buffer.data[next_delim - 1] == 13):
+          if has_escape and self._is_escaped(read_buffer, next_delim - 1):
             # Accept '\n' as a default delimiter, because '\r' is escaped.
             return (next_delim, next_delim + 1)
           else:
             # Accept both '\r\n' and '\n' as a default delimiter.
             return (next_delim - 1, next_delim + 1)
         else:
-          if self._escapechar is not None and self._is_escaped(read_buffer,
-                                                               next_delim):
+          if has_escape and self._is_escaped(read_buffer, next_delim):
             # Skip an escaped delimiter.
             current_pos = next_delim + delimiter_len
             continue
@@ -327,7 +327,7 @@ class _TextSource(filebasedsource.FileBasedSource):
             # Found a delimiter. Accepting that as the next delimiter.
             return (next_delim, next_delim + delimiter_len)
 
-      elif self._delimiter is not None:
+      elif not is_default_delim:
         # Corner case: custom delimiter is truncated at the end of the buffer.
         next_delim = read_buffer.data.find(
             delimiter[0], len(read_buffer.data) - delimiter_len + 1)

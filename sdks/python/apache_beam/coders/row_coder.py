@@ -75,6 +75,7 @@ class RowCoder(FastCoder):
           c.as_deterministic_coder(force_deterministic) for c in self.components
       ]
     self.forced_deterministic = bool(force_deterministic)
+    self._hash = None
 
   def _create_impl(self):
     return RowCoderImpl(self.schema, self.components)
@@ -92,7 +93,9 @@ class RowCoder(FastCoder):
     return self._type_hint
 
   def __hash__(self):
-    return hash(self.schema.SerializeToString())
+    if self._hash is None:
+      self._hash = hash(self.schema.SerializeToString())
+    return self._hash
 
   def __eq__(self, other):
     return (

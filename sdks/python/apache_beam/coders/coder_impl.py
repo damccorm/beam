@@ -1948,12 +1948,11 @@ class RowCoderImpl(StreamCoderImpl):
             but found fields without encoding_position set: {names_no_pos}''')
       self.encoding_positions = list(
           field.encoding_position for field in self.schema.fields)
-    self.encoding_positions_argsort = list(np.argsort(self.encoding_positions))
+    self.encoding_positions_argsort = np.argsort(
+        self.encoding_positions).tolist()
     self.encoding_positions_are_trivial = self.encoding_positions == list(
         range(len(self.encoding_positions)))
-    self.components = list(
-        components[self.encoding_positions.index(i)].get_impl()
-        for i in self.encoding_positions)
+    self.components = [c.get_impl() for c in components]
     self.has_nullable_fields = any(
         field.type.nullable for field in self.schema.fields)
     self.static_encoding = any(

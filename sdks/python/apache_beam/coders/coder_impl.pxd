@@ -299,11 +299,13 @@ cdef class RowCoderImpl(StreamCoderImpl):
   cdef bint has_nullable_fields
   cdef bint static_encoding
 
-  @cython.locals(i=int, nvals=libc.stdint.int64_t, running=int, component_coder=CoderImpl,
-                 null_mask=bytes, null_mask_c=char_ptr)
+  @cython.locals(i=int, nvals=libc.stdint.int64_t, null_mask_len=libc.stdint.int64_t,
+                 running=int, component_coder=CoderImpl,
+                 null_mask_py=bytes, null_mask_c=char_ptr)
   cpdef decode_from_stream(self, InputStream stream, bint nested)
 
-  @cython.locals(i=int, nvals=libc.stdint.int64_t, k=size_t, n=size_t,
+  @cython.locals(i=int, nvals=libc.stdint.int64_t, null_mask_len=libc.stdint.int64_t,
+                 k=size_t, n=size_t,
                  null_mask=bytes, null_mask_c=char_ptr)
   cpdef decode_batch_from_stream(self, dict dest, InputStream stream)
 

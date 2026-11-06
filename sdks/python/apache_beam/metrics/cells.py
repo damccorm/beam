@@ -674,6 +674,16 @@ class _BoundedTrieNode(object):
     self._children: Optional[dict[str, '_BoundedTrieNode']] = {}
     self._truncated = False
 
+  def copy(self):
+    node = _BoundedTrieNode.__new__(_BoundedTrieNode)
+    node._size = self._size
+    node._truncated = self._truncated
+    node._children = (
+        {k: v.copy()
+         for k, v in self._children.items()}
+        if self._children is not None else None)
+    return node
+
   def to_proto(self) -> metrics_pb2.BoundedTrieNode:
     return metrics_pb2.BoundedTrieNode(
         truncated=self._truncated,
@@ -852,8 +862,14 @@ class BoundedTrieData(object):
   def __repr__(self) -> str:
     return 'BoundedTrieData({})'.format(self.as_trie())
 
+  def copy(self):
+    return BoundedTrieData(
+        root=self._root.copy() if self._root is not None else None,
+        singleton=self._singleton,
+        bound=self._bound)
+
   def get_cumulative(self) -> "BoundedTrieData":
-    return copy.deepcopy(self)
+    return self.copy()
 
   def get_result(self) -> Set[tuple]:
     if self._root is None:
@@ -886,9 +902,9 @@ class BoundedTrieData(object):
     else:
       if self._root is None and other._root is not None:
         self, other = other, self
-      combined = copy.deepcopy(self.as_trie())
+      combined = self.as_trie().copy()
       if other._root is not None:
-        combined.merge(other._root)
+        combined.merge(other._root.copy())
       else:
         combined.add(other._singleton)
       self._bound = min(self._bound, other._bound)

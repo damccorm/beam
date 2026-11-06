@@ -94,8 +94,6 @@ class ByteCountingOutputStream(OutputStream):
 
   A pure Python implementation of stream.ByteCountingOutputStream."""
   def __init__(self):
-    # Note that we don't actually use any of the data initialized by our super.
-    super().__init__()
     self.count = 0
 
   def write(self, byte_array: bytes, nested: bool = False) -> None:
@@ -107,7 +105,37 @@ class ByteCountingOutputStream(OutputStream):
   def write_byte(self, _):
     self.count += 1
 
+  def write_var_int64(self, v: int) -> None:
+    self.count += get_varint_size(v)
+
+  def write_var_int32(self, v: int) -> None:
+    if v < 0:
+      self.count += 5
+    else:
+      self.count += get_varint_size(v)
+
+  def write_bigendian_int64(self, _):
+    self.count += 8
+
+  def write_bigendian_uint64(self, _):
+    self.count += 8
+
+  def write_bigendian_int32(self, _):
+    self.count += 4
+
+  def write_bigendian_int16(self, _):
+    self.count += 2
+
+  def write_bigendian_double(self, _):
+    self.count += 8
+
+  def write_bigendian_float(self, _):
+    self.count += 4
+
   def get_count(self):
+    return self.count
+
+  def size(self) -> int:
     return self.count
 
   def get(self):

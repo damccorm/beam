@@ -674,8 +674,8 @@ class _BoundedTrieNode(object):
     self._children: Optional[dict[str, '_BoundedTrieNode']] = {}
     self._truncated = False
 
-  def copy(self):
-    node = _BoundedTrieNode.__new__(_BoundedTrieNode)
+  def copy(self) -> '_BoundedTrieNode':
+    node = _BoundedTrieNode()
     node._size = self._size
     node._truncated = self._truncated
     node._children = (
